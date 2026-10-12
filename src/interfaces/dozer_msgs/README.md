@@ -5,7 +5,7 @@
 | 文件 | 用途 |
 |---|---|
 | `RadarObject` / `RadarObjectArray` | 雷达单周期目标列表（SR73F 0x60A/0x60B） |
-| `RadarStatus` | 雷达状态（SR73F 0x201） |
+| `RadarStatus` | 雷达状态（SR73F 0x201/0x402/0x700 汇总，含在线、固件、周期频率） |
 | `Detection2D` / `Detection2DArray` | 图像 2D 检测结果 |
 | `DriveCommand` | 实时驾驶指令（对齐 vtsrtc.vehicle.v1.DriveCommand） |
 | `VehicleState` | 车辆控制状态（对齐 vtsrtc.vehicle.v1.VehicleState） |

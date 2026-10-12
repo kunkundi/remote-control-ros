@@ -2,15 +2,17 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypenamespace="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>dozer_radar_sr73f</name>
-  <version>0.1.0</version>
-  <description>SR73F 毫米波雷达驱动：SocketCAN 读取 can0，发布各雷达目标与状态</description>
+  <version>0.2.0</version>
+  <description>SR73F 毫米波雷达驱动：SocketCAN 读取多台雷达，发布目标列表、点云、状态与诊断；附带雷达配置工具</description>
   <maintainer email="todo@example.com">TODO</maintainer>
   <license>Proprietary</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <depend>rclcpp</depend>
-  <depend>dozer_msgs</depend>
+  <depend>rclcpp_components</depend>
+  <depend>sensor_msgs</depend>
   <depend>diagnostic_msgs</depend>
+  <depend>dozer_msgs</depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
 

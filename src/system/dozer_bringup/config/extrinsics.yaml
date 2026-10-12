@@ -8,6 +8,12 @@ sensors:
   - frame: radar_front_right
     xyz: [0.0, 0.0, 0.0]
     rpy: [0.0, 0.0, 0.0]
+  - frame: radar_rear_left
+    xyz: [0.0, 0.0, 0.0]
+    rpy: [0.0, 0.0, 0.0]
+  - frame: radar_rear_right
+    xyz: [0.0, 0.0, 0.0]
+    rpy: [0.0, 0.0, 0.0]
   - frame: camera_stereo
     xyz: [0.0, 0.0, 0.0]
     rpy: [0.0, 0.0, 0.0]

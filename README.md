@@ -104,7 +104,7 @@ dozer_xxx/
 |---|---|---|---|---|---|---|
 | `dozer_msgs` | 接口 | 接口定义 | — | — | 架构负责人 | 第一版已提交 |
 | `dozer_camera_gmsl` | 驱动 | 8 路 GMSL 采集、CUDA 转换、时间戳 | `/dev/video0-7` | 帧（进程内）、`/camera/<name>/image_small` | RTC 模块负责人（建议） | 骨架 |
-| `dozer_radar_sr73f` | 驱动 | SR73F 驱动，can0，1 Mbps，SensorID 0-3 | can0 | `/radar/<name>/objects`、`/radar/<name>/status` | 待定 | 骨架 |
+| `dozer_radar_sr73f` | 驱动 | SR73F 驱动 + 配置工具 `sr73f_config`，can0，SensorID 0-3 | can0 | `/radar/<name>/objects`、`/radar/<name>/points`、`/radar/<name>/status` | 待定 | 已实现，待硬件验证 |
 | `dozer_perception` | 感知 | 检测/感知算法 | `/camera/<name>/image_small` | `/perception/detections` | 待定 | 骨架 |
 | `dozer_fusion` | 感知 | 雷达 + 视觉融合 | 雷达、检测、tf | `/fusion/objects` | 待定 | 后期 |
 | `dozer_vehicle` | 控制 | 驾驶指令看门狗、换档、车辆接口 | `/vehicle/drive_cmd`、`/vehicle/set_gear` | `/vehicle/state` | 待定 | 骨架 |
@@ -125,6 +125,7 @@ dozer_xxx/
 | `/camera/<name>/image_raw` | `sensor_msgs/Image` | dozer_camera_gmsl | SensorData | 采集帧率；仅进程内或调试使用（第二阶段） |
 | `/camera/<name>/image_small` | `sensor_msgs/Image` | dozer_camera_gmsl | SensorData | ≤ 15 Hz |
 | `/radar/<name>/objects` | `dozer_msgs/RadarObjectArray` | dozer_radar_sr73f | SensorData | 30 Hz |
+| `/radar/<name>/points` | `sensor_msgs/PointCloud2` | dozer_radar_sr73f | SensorData | 30 Hz，仅有订阅者时发布（可视化用） |
 | `/radar/<name>/status` | `dozer_msgs/RadarStatus` | dozer_radar_sr73f | Reliable | 1 Hz |
 | `/perception/detections` | `dozer_msgs/Detection2DArray` | dozer_perception | SensorData | 跟随输入 |
 | `/fusion/objects` | 待定 | dozer_fusion | SensorData | — |
@@ -254,9 +255,13 @@ source install/setup.bash        # ~/.bashrc 中已配置自动 source
 # 只编译某个包（及其依赖）
 colcon build --packages-up-to dozer_rtc_bridge
 
-# 启动（当前只有外参发布与模拟雷达）
-ros2 launch dozer_bringup dozer.launch.py use_mock_radar:=true
+# 启动外参发布 + 雷达驱动（use_mock_radar:=true 则用模拟雷达）
+ros2 launch dozer_bringup dozer.launch.py use_radar:=true
 ros2 topic hz /radar/front_left/objects
+
+# 单独启动雷达驱动 / 回放 candump 日志
+ros2 launch dozer_bringup radar.launch.py
+ros2 launch dozer_bringup radar.launch.py replay_file:=/path/to/candump.log
 
 # 录包（MCAP 格式，不录原始图像）
 ros2 run dozer_tools record_bag.sh
@@ -293,6 +298,7 @@ ros2 run dozer_tools record_bag.sh
 | 项目 | 现状 |
 |---|---|
 | CAN | `can0` 为 SoC MTTCAN（规划给雷达）；`can1`/`can2` 为 SPI 外挂 MCP2518FD。开机由 `/opt/nx_port_init/nx_can_init.sh` 以 500 kbps 拉起 |
+| SocketCAN | 内核 `can`、`can_raw` 为模块且**开机未加载**，需 `sudo modprobe can_raw` 并写入 `/etc/modules-load.d/can.conf`（见 `dozer_radar_sr73f` README 第 0 步） |
 | 雷达 | SR73F，资料在 `autoDozer/driver/homibo/`；规划 SensorID 0-3、1 Mbps、每台最多输出 30 个目标。雷达改为 1 Mbps 后再修改 `can0` 的 bitrate |
 | 相机 | 8 路 GMSL，`/dev/video0-7`，UYVY；当前双目 video0/1，环视 video2-5 |
 | 已安装 | ROS 2 Humble desktop、`rosbag2-storage-mcap`、`foxglove-bridge`、cantools（pip 用户目录） |
@@ -308,3 +314,4 @@ ros2 run dozer_tools record_bag.sh
 |---|---|
 | 2026-10-12 | 初始化工作空间骨架、`dozer_msgs` 第一版、统一约定 |
 | 2026-10-12 | 按层组织目录；新增驱动层规范与 `dozer_camera_gmsl`；`dozer_radar` 改名为 `dozer_radar_sr73f` |
+| 2026-10-12 | 实现 `dozer_radar_sr73f` 驱动与 `sr73f_config` 工具；`RadarStatus` 增加固件、周期频率、区域字段；新增 `radar.launch.py` |
