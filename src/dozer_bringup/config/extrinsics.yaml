@@ -1,0 +1,13 @@
+# 传感器外参：相对 base_link（车体坐标系，REP-103：x 前、y 左、z 上，原点待定）。
+# 单位：m / rad。标定完成后更新本文件，并在提交说明中记录标定日期与方法。
+# 以下数值均为占位，未标定。
+sensors:
+  - frame: radar_front_left
+    xyz: [0.0, 0.0, 0.0]
+    rpy: [0.0, 0.0, 0.0]
+  - frame: radar_front_right
+    xyz: [0.0, 0.0, 0.0]
+    rpy: [0.0, 0.0, 0.0]
+  - frame: camera_stereo
+    xyz: [0.0, 0.0, 0.0]
+    rpy: [0.0, 0.0, 0.0]

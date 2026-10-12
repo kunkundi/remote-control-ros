@@ -1,0 +1,18 @@
+# 换档事务，对应 vtsrtc.vehicle.v1.SetGear / EventAck。
+# 返回 accepted=true 仅表示车辆接口已接受，实际档位以 VehicleState.active_gear 为准。
+
+uint8 GEAR_NEUTRAL=0
+uint8 GEAR_FORWARD=1
+uint8 GEAR_REVERSE=2
+
+uint64 request_id
+uint8 gear
+---
+uint8 ERROR_NONE=0
+uint8 ERROR_INVALID_ARGUMENT=1
+uint8 ERROR_INVALID_STATE=2
+uint8 ERROR_INTERNAL=3
+
+bool accepted
+uint8 error_code
+uint8 active_gear

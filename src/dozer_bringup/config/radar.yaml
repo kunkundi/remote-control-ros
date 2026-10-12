@@ -1,0 +1,14 @@
+# dozer_radar 参数（待驱动实现后按实际字段调整）。
+# 总线规划：4 台 SR73F 共用 can0，统一 1 Mbps，SensorID 0-3，
+# Max_OutputNumber <= 30（4 台 × 30 目标 × 30 Hz ≈ 47% 负载）。
+dozer_radar:
+  ros__parameters:
+    can_interface: can0
+    offline_timeout_ms: 500
+    radars:
+      - name: front_left
+        sensor_id: 0
+        frame_id: radar_front_left
+      - name: front_right
+        sensor_id: 1
+        frame_id: radar_front_right
