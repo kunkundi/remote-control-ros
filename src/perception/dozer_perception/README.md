@@ -1,6 +1,6 @@
 # dozer_perception
 
-感知算法节点。负责人：待定。
+感知算法节点（感知层），只通过 topic 获取传感器数据，不链接驱动代码。负责人：待定。
 
 - 输入：`/camera/<name>/image_small`（sensor_msgs/Image）
 - 输出：`/perception/detections`（Detection2DArray，header.stamp 等于输入帧时间戳）

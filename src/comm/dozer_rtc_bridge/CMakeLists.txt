@@ -11,6 +11,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(dozer_msgs REQUIRED)
+find_package(dozer_camera_gmsl REQUIRED)
 
 # rtc-framework 用 xmake 构建并安装，这里只引用其安装产物，不复制源码。
 set(RTC_FRAMEWORK_INSTALL "$ENV{HOME}/workspace/rtc-framework/install"

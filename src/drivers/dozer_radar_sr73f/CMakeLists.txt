@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(dozer_radar)
+project(dozer_radar_sr73f)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

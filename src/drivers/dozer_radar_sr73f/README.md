@@ -1,6 +1,6 @@
-# dozer_radar
+# dozer_radar_sr73f
 
-SR73F 毫米波雷达驱动。负责人：待定。
+SR73F 毫米波雷达驱动（驱动层），遵守工作空间 README 第 5 节驱动层规范。负责人：待定。
 
 - 输入：SocketCAN `can0`（1 Mbps，规划 3~4 台，SensorID 0-3，报文 ID = 基础 ID + SensorID × 0x10）
 - 输出：`/radar/<name>/objects`（RadarObjectArray，30 Hz）、`/radar/<name>/status`（RadarStatus，1 Hz）、`/diagnostics`
