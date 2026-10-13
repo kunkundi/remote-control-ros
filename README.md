@@ -298,12 +298,13 @@ ros2 run dozer_tools record_bag.sh
 | 项目 | 现状 |
 |---|---|
 | CAN | `can0` 为 SoC MTTCAN（规划给雷达）；`can1`/`can2` 为 SPI 外挂 MCP2518FD。开机由 `/opt/nx_port_init/nx_can_init.sh` 以 500 kbps 拉起 |
-| SocketCAN | 内核 `can`、`can_raw` 为模块且**开机未加载**，需 `sudo modprobe can_raw` 并写入 `/etc/modules-load.d/can.conf`（见 `dozer_radar_sr73f` README 第 0 步） |
+| SocketCAN | 内核 `can`、`can_raw` 为可加载模块，已通过 `/etc/modules-load.d/can.conf` 开机自动加载 |
 | 雷达 | SR73F，资料在 `autoDozer/driver/homibo/`；规划 SensorID 0-3、1 Mbps、每台最多输出 30 个目标。雷达改为 1 Mbps 后再修改 `can0` 的 bitrate |
 | 相机 | 8 路 GMSL，`/dev/video0-7`，UYVY；当前双目 video0/1，环视 video2-5 |
 | 已安装 | ROS 2 Humble desktop、`rosbag2-storage-mcap`、`foxglove-bridge`、cantools（pip 用户目录） |
 | 系统参数 | `/etc/sysctl.d/60-ros2-dds.conf`：`rmem_max`/`wmem_max` = 32 MB |
 | **禁止** | **不要在本机执行 `apt upgrade`**：载板使用厂商定制内核，升级 `nvidia-l4t-*` 会覆盖内核、模块和 bootloader |
+| 内核 | 厂商内核（`03-OrinNxNano-DC-GMSL-8CH-image_jp6-2-1_2v1`，Jul 3 2026）。2026-10-11 被 `apt-get upgrade` 覆盖后已于 10-13 回滚；`nvidia-l4t-*` 已 `apt-mark hold`；备份与回退脚本见 `~/backup_kernel_36.4.7_20261013/`、`~/rollback_to_stock.sh` |
 | 注意 | 内存仅 8 GB，联调时尽量关闭 VS Code Server 等占用大的进程 |
 
 ---

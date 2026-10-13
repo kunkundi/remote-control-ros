@@ -69,16 +69,15 @@ SR73F 原始坐标：纵向向前为正，**横向向右为正**（协议：点 
 以下命令在 Jetson 上执行，先 `cd ~/workspace/ros2_ws && source install/setup.bash`。
 为书写方便，记 `C=install/dozer_radar_sr73f/lib/dozer_radar_sr73f/sr73f_config`。
 
-### 0. 加载 SocketCAN 模块（只需一次）
+### 0. SocketCAN 模块（已配置开机自动加载）
 
-当前系统开机时没有加载 `can`、`can_raw` 模块，任何 SocketCAN 程序（包括 `candump`）都会报
-`Address family not supported by protocol`。
+内核中 `can`、`can_raw` 为可加载模块。2026-10-13 起已写入 `/etc/modules-load.d/can.conf`，开机自动加载。
+若 `candump` 报 `Address family not supported by protocol`，说明模块未加载：
 
 ```bash
-sudo modprobe can_raw                     # 会自动加载 can
 lsmod | grep -E "^can"                    # 应看到 can_raw、can
-# 开机自动加载：
-printf 'can\ncan_raw\n' | sudo tee /etc/modules-load.d/can.conf
+sudo modprobe can_raw                     # 临时加载
+cat /etc/modules-load.d/can.conf          # 应包含 can、can_raw
 ```
 
 ### 1. 接线（先接一台）
@@ -184,6 +183,11 @@ colcon test --packages-select dozer_radar_sr73f && colcon test-result --verbose
 0x201/0x402 字段位置、周期拼装（丢帧、超时、孤立目标、计数回绕）、candump 解析。
 
 已在 Jetson 上回放验证：4 台 × 63 目标（约 7700 帧/s）时节点占单核约 5%，无丢周期。
+
+## 实车验证记录
+
+- 2026-10-13：单台 SR73F（固件 3.0.2，ID 0，500K）接 can0。`scan` 识别正常；驱动 30.3 Hz，484 个周期全部完整，
+  无测量计数断档、无总线错误帧；节点 CPU 1.8%。出厂区域：max=63，P1=(0,50) P2=(50,-50)。
 
 ## 待确认事项
 
