@@ -9,8 +9,10 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclpy REQUIRED)
 find_package(dozer_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
+install(PROGRAMS scripts/fusion_node.py DESTINATION lib/${PROJECT_NAME})
 
 # TODO(负责人)：在此添加节点目标，参考 README.md 中的“包规范”。
 # 示例：

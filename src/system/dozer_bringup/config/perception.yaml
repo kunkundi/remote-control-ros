@@ -1,0 +1,22 @@
+# 三路相机共用工程内的 YOLO 权重。替换 best.pt 时同步修改三个 model_path。
+yolo_front_left:
+  ros__parameters:
+    image_topic: /camera/front_left/image_small
+    detections_topic: /perception/detections
+    source_id: front_left
+    model_path: /home/nvidia/workspace/ros2_ws/src/perception/dozer_perception/model/best.pt
+    confidence: 0.25
+yolo_front_right:
+  ros__parameters:
+    image_topic: /camera/front_right/image_small
+    detections_topic: /perception/front_right/detections
+    source_id: front_right
+    model_path: /home/nvidia/workspace/ros2_ws/src/perception/dozer_perception/model/best.pt
+    confidence: 0.25
+yolo_rear:
+  ros__parameters:
+    image_topic: /camera/rear/image_small
+    detections_topic: /perception/rear/detections
+    source_id: rear
+    model_path: /home/nvidia/workspace/ros2_ws/src/perception/dozer_perception/model/best.pt
+    confidence: 0.25

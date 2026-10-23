@@ -1,0 +1,29 @@
+# 当前实机联调：SensorID 0 雷达与 video0/video1 两路相机。
+# 两路图像为 1920x1080 降采样 3 倍得到 640x360。
+# 以下内参仅为 640x360 联调初值（约 65° 水平视场），未经标定，不可用于实车定位。
+# 实车使用前必须替换为对应 image_small 分辨率的标定值，并完成图像去畸变。
+fusion_node:
+  ros__parameters:
+    radar_topics: [/radar/front_left/objects]
+    camera_names: [front_left, front_right]
+    output_topic: /perception/fused_detections
+    output_frame: base_link
+    max_age_sec: 0.12
+    stale_sec: 0.5
+    publish_hz: 15.0
+    front_left.frame: camera_front_left_optical
+    front_left.detections_topic: /perception/detections
+    front_left.width: 640
+    front_left.height: 360
+    front_left.fx: 500.0
+    front_left.fy: 500.0
+    front_left.cx: 320.0
+    front_left.cy: 180.0
+    front_right.frame: camera_front_right_optical
+    front_right.detections_topic: /perception/front_right/detections
+    front_right.width: 640
+    front_right.height: 360
+    front_right.fx: 500.0
+    front_right.fy: 500.0
+    front_right.cx: 320.0
+    front_right.cy: 180.0

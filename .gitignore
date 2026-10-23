@@ -8,3 +8,5 @@ __pycache__/
 bags/
 *.engine
 *.onnx
+src/perception/dozer_perception/model/*
+!src/perception/dozer_perception/model/README.md

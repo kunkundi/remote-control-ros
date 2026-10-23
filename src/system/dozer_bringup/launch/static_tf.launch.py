@@ -24,6 +24,6 @@ def generate_launch_description():
             name='tf_' + s['frame'],
             arguments=['--x', x, '--y', y, '--z', z,
                        '--roll', roll, '--pitch', pitch, '--yaw', yaw,
-                       '--frame-id', 'base_link', '--child-frame-id', s['frame']],
+                       '--frame-id', s.get('parent', 'base_link'), '--child-frame-id', s['frame']],
         ))
     return LaunchDescription(nodes)

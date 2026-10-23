@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""Run an Ultralytics YOLO model on ROS images and publish normalized boxes."""
+
+from pathlib import Path
+
+import numpy as np
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import Image
+from dozer_msgs.msg import Detection2D, Detection2DArray
+
+
+class YoloNode(Node):
+    def __init__(self):
+        super().__init__('yolo_node')
+        self.declare_parameter('image_topic', '/camera/front_left/image_small')
+        self.declare_parameter('detections_topic', '/perception/detections')
+        self.declare_parameter('source_id', 'front_left')
+        self.declare_parameter('model_path', '')
+        self.declare_parameter('confidence', 0.25)
+        path = self.get_parameter('model_path').value
+        if not path:
+            raise ValueError('model_path must point to a YOLO model or TensorRT engine')
+        if not Path(path).is_file():
+            raise FileNotFoundError(f'YOLO model not found: {path}')
+        from ultralytics import YOLO
+        self.model = YOLO(path)
+        self.seq = 0
+        self.publisher = self.create_publisher(
+            Detection2DArray, self.get_parameter('detections_topic').value, 10)
+        self.subscription = self.create_subscription(
+            Image, self.get_parameter('image_topic').value, self.on_image,
+            qos_profile_sensor_data)
+
+    def on_image(self, msg):
+        encodings = {'rgb8': (3, True), 'bgr8': (3, False),
+                     'rgba8': (4, True), 'bgra8': (4, False)}
+        if msg.encoding not in encodings:
+            self.get_logger().warn(f'Unsupported image encoding: {msg.encoding}',
+                                   throttle_duration_sec=5.0)
+            return
+        channels, rgb = encodings[msg.encoding]
+        row_bytes = msg.width * channels
+        if msg.step < row_bytes or len(msg.data) < msg.step * msg.height:
+            self.get_logger().error('Invalid image buffer size')
+            return
+        pixels = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.step)
+        image = pixels[:, :row_bytes].reshape(msg.height, msg.width, channels)
+        if channels == 4:
+            image = image[:, :, :3]
+        if rgb:
+            image = image[:, :, ::-1]
+        image = np.ascontiguousarray(image)
+        result = self.model.predict(image, conf=self.get_parameter('confidence').value,
+                                    verbose=False)[0]
+        output = Detection2DArray()
+        output.header = msg.header
+        output.source_id = self.get_parameter('source_id').value
+        output.frame_seq = self.seq
+        self.seq += 1
+        output.image_width, output.image_height = msg.width, msg.height
+        output.model_name = self.get_parameter('model_path').value
+        for box in result.boxes:
+            x1, y1, x2, y2 = box.xyxy[0].tolist()
+            detection = Detection2D()
+            detection.class_id = int(box.cls[0])
+            detection.score = float(box.conf[0])
+            detection.x = max(0.0, min(1.0, x1 / msg.width))
+            detection.y = max(0.0, min(1.0, y1 / msg.height))
+            detection.w = max(0.0, min(1.0 - detection.x, (x2 - x1) / msg.width))
+            detection.h = max(0.0, min(1.0 - detection.y, (y2 - y1) / msg.height))
+            output.detections.append(detection)
+        self.publisher.publish(output)
+
+
+def main():
+    rclpy.init()
+    node = YoloNode()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.try_shutdown()
+
+
+if __name__ == '__main__':
+    main()

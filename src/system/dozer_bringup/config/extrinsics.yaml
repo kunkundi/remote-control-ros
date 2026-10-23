@@ -1,31 +1,37 @@
 # 传感器外参：相对 base_link（车体坐标系，REP-103：x 前、y 左、z 上，原点待定）。
 # 单位：m / rad。标定完成后更新本文件，并在提交说明中记录标定日期与方法。
-# 以下数值均为占位，未标定。
+# 雷达和相机均为前左/前右/后向三路。
+# 以下 base_link -> 传感器位姿仅为联调初值，假设车体前后半长约 1.2 m；
+# 坐标原点、安装尺寸、朝向均未经实测，不可用于实车定位或安全判断。
+# rear 雷达/相机朝车尾，yaw=pi。optical 子坐标系的固定旋转是坐标约定。
 sensors:
   - frame: radar_front_left
-    xyz: [0.0, 0.0, 0.0]
+    xyz: [1.2, 0.5, 0.7]
     rpy: [0.0, 0.0, 0.0]
   - frame: radar_front_right
-    xyz: [0.0, 0.0, 0.0]
+    xyz: [1.2, -0.5, 0.7]
     rpy: [0.0, 0.0, 0.0]
-  - frame: radar_rear_left
-    xyz: [0.0, 0.0, 0.0]
+  - frame: radar_rear
+    xyz: [-1.2, 0.0, 0.7]
+    rpy: [0.0, 0.0, 3.141592653589793]
+  - frame: camera_front_left
+    xyz: [1.1, 0.5, 1.2]
     rpy: [0.0, 0.0, 0.0]
-  - frame: radar_rear_right
+  - frame: camera_front_left_optical
+    parent: camera_front_left
     xyz: [0.0, 0.0, 0.0]
+    rpy: [-1.5707963267948966, 0.0, -1.5707963267948966]
+  - frame: camera_front_right
+    xyz: [1.1, -0.5, 1.2]
     rpy: [0.0, 0.0, 0.0]
-  - frame: camera_stereo
+  - frame: camera_front_right_optical
+    parent: camera_front_right
     xyz: [0.0, 0.0, 0.0]
-    rpy: [0.0, 0.0, 0.0]
-  - frame: camera_surround_front
+    rpy: [-1.5707963267948966, 0.0, -1.5707963267948966]
+  - frame: camera_rear
+    xyz: [-1.1, 0.0, 1.2]
+    rpy: [0.0, 0.0, 3.141592653589793]
+  - frame: camera_rear_optical
+    parent: camera_rear
     xyz: [0.0, 0.0, 0.0]
-    rpy: [0.0, 0.0, 0.0]
-  - frame: camera_surround_rear
-    xyz: [0.0, 0.0, 0.0]
-    rpy: [0.0, 0.0, 0.0]
-  - frame: camera_surround_left
-    xyz: [0.0, 0.0, 0.0]
-    rpy: [0.0, 0.0, 0.0]
-  - frame: camera_surround_right
-    xyz: [0.0, 0.0, 0.0]
-    rpy: [0.0, 0.0, 0.0]
+    rpy: [-1.5707963267948966, 0.0, -1.5707963267948966]

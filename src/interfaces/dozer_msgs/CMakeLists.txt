@@ -11,6 +11,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/RadarStatus.msg"
   "msg/Detection2D.msg"
   "msg/Detection2DArray.msg"
+  "msg/FusedDetection.msg"
+  "msg/FusedDetectionArray.msg"
   "msg/DriveCommand.msg"
   "msg/VehicleState.msg"
   "srv/SetGear.srv"
