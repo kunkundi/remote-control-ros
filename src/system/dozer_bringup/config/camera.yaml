@@ -1,33 +1,19 @@
-# dozer_camera_gmsl 参数（待驱动实现后按实际字段调整）。
-# 设备映射取自 Jetson 上 rtc-framework/config/rtc.cfg 的 edge 段（2026-10-12），迁移后以本文件为准。
-# name 与 rtc 视频源 ID 的对应：stereo → merged_image，surround_<pos> → surround_<pos>。
-camera_gmsl:
+# 当前实机联调只用 video0/video1；物理安装方向尚未核对。
+# 两路 1920x1080 以 3 倍降采样发布 640x360 BGR 图像。
+# rtc_edge 与本节点不可同时占用这些设备。
+camera_front_left:
   ros__parameters:
-    small_image_max_fps: 15
-    small_image_downscale: 2
-    cameras:
-      - name: stereo           # 双目，左右拼接为一路
-        frame_id: camera_stereo
-        devices: ["/dev/video0", "/dev/video1"]
-        width: 1920
-        height: 1080
-      - name: surround_front
-        frame_id: camera_surround_front
-        devices: ["/dev/video2"]
-        width: 1280
-        height: 720
-      - name: surround_rear
-        frame_id: camera_surround_rear
-        devices: ["/dev/video3"]
-        width: 1280
-        height: 720
-      - name: surround_left
-        frame_id: camera_surround_left
-        devices: ["/dev/video4"]
-        width: 1280
-        height: 720
-      - name: surround_right
-        frame_id: camera_surround_right
-        devices: ["/dev/video5"]
-        width: 1280
-        height: 720
+    camera_name: front_left
+    device: /dev/video0
+    width: 1920
+    height: 1080
+    small_image_downscale: 3
+    small_image_max_fps: 5.0
+camera_front_right:
+  ros__parameters:
+    camera_name: front_right
+    device: /dev/video1
+    width: 1920
+    height: 1080
+    small_image_downscale: 3
+    small_image_max_fps: 5.0
