@@ -103,7 +103,7 @@ dozer_xxx/
 | 包 | 层 | 职责 | 输入 | 输出 | 负责人 | 状态 |
 |---|---|---|---|---|---|---|
 | `dozer_msgs` | 接口 | 接口定义 | — | — | 架构负责人 | 第一版已提交 |
-| `dozer_camera_gmsl` | 驱动 | 8 路 GMSL 采集、CUDA 转换、时间戳 | `/dev/video0-7` | 帧（进程内）、`/camera/<name>/image_small` | RTC 模块负责人（建议） | 骨架 |
+| `dozer_camera_gmsl` | 驱动 | 三路 V4L2 采集、降采样与时间戳 | 配置的 `/dev/videoN` | `/camera/<name>/image_small` | 待定 | 节点已实现，待实机取帧验证 |
 | `dozer_radar_sr73f` | 驱动 | SR73F 驱动 + 配置工具 `sr73f_config`，can0，SensorID 0-3 | can0 | `/radar/<name>/objects`、`/radar/<name>/points`、`/radar/<name>/status` | 待定 | 已实现，待硬件验证 |
 | `dozer_perception` | 感知 | 检测/感知算法 | `/camera/<name>/image_small` | `/perception/detections` | 待定 | 骨架 |
 | `dozer_fusion` | 感知 | 雷达 + 视觉融合 | 雷达、检测、tf | `/fusion/objects` | 待定 | 后期 |
@@ -189,6 +189,8 @@ dozer_xxx/
 | 第二阶段 | `dozer_camera_gmsl` 为 ROS 2 component | 与 `dozer_rtc_bridge` 加载到同一个 `component_container_mt`，开启 `use_intra_process_comms`；帧类型用 `rclcpp::TypeAdapter`（REP-2007）适配 `sensor_msgs/Image`：同进程订阅者拿到共享 CUDA/DMA 缓冲区（零拷贝），只有 rosbag/rviz 等跨进程订阅者出现时才转换 |
 
 降采样帧 `/camera/<name>/image_small` 由 `dozer_camera_gmsl` 发布，供感知算法跨进程订阅。
+当前已实现独立的 V4L2 ROS 节点，只发布该降采样帧；上表中的共享库与 component
+是原定的 RTC 集成规划，尚未实现。
 
 ---
 

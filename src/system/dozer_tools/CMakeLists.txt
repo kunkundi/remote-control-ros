@@ -5,6 +5,7 @@ find_package(ament_cmake REQUIRED)
 
 install(PROGRAMS
   scripts/mock_radar_publisher.py
+  scripts/mock_camera_publisher.py
   scripts/record_bag.sh
   DESTINATION lib/${PROJECT_NAME}
 )

@@ -1,7 +1,5 @@
 # dozer_radar_sr73f 参数。
-# 总线规划：SR73F 共用 can0，SensorID 0-3；全部就绪后统一改 1 Mbps，
-# 每台通过区域配置限制最大输出目标数 <= 30（4 台 × 30 目标 × 30 Hz ≈ 47% 负载 @1M）。
-# radar_names 决定启用哪些雷达；下面预置了 4 个位置，验证时按实际接入数量增减。
+# 当前实机联调只启用 SensorID 0；其余两台的配置保留供以后接入。
 radar_sr73f:
   ros__parameters:
     can_interface: can0
@@ -11,16 +9,13 @@ radar_sr73f:
     publish_pointcloud: true # 有订阅者时发布 /radar/<name>/points 供 rviz/foxglove 查看
     offline_timeout_ms: 500
     cycle_timeout_ms: 100
-    radar_names: ["front_left"]   # 首次验证：单台出厂雷达（SensorID 0）
+    radar_names: ["front_left"]
     front_left:
       sensor_id: 0
       frame_id: radar_front_left
     front_right:
       sensor_id: 1
       frame_id: radar_front_right
-    rear_left:
+    rear:
       sensor_id: 2
-      frame_id: radar_rear_left
-    rear_right:
-      sensor_id: 3
-      frame_id: radar_rear_right
+      frame_id: radar_rear

@@ -14,7 +14,7 @@ class MockRadarPublisher(Node):
 
     def __init__(self):
         super().__init__('mock_radar_publisher')
-        self.declare_parameter('radars', ['front_left', 'front_right'])
+        self.declare_parameter('radars', ['front_left', 'front_right', 'rear'])
         self.declare_parameter('rate_hz', 30.0)
         self.declare_parameter('objects_per_radar', 10)
 
