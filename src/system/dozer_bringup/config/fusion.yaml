@@ -10,6 +10,7 @@ fusion_node:
     output_frame: base_link
     max_age_sec: 0.12
     stale_sec: 0.5
+    max_match_distance_m: 6.0  # 联调时只将前方 0–6 m 的雷达目标与视觉框关联
     publish_hz: 15.0
     front_left.frame: camera_front_left_optical
     front_left.detections_topic: /perception/detections

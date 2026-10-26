@@ -6,6 +6,7 @@ yolo_front_left:
     source_id: front_left
     model_path: /home/nvidia/workspace/ros2_ws/src/perception/dozer_perception/model/best.pt
     confidence: 0.25
+    device: 0
 yolo_front_right:
   ros__parameters:
     image_topic: /camera/front_right/image_small
@@ -13,6 +14,7 @@ yolo_front_right:
     source_id: front_right
     model_path: /home/nvidia/workspace/ros2_ws/src/perception/dozer_perception/model/best.pt
     confidence: 0.25
+    device: 0
 yolo_rear:
   ros__parameters:
     image_topic: /camera/rear/image_small
@@ -20,3 +22,4 @@ yolo_rear:
     source_id: rear
     model_path: /home/nvidia/workspace/ros2_ws/src/perception/dozer_perception/model/best.pt
     confidence: 0.25
+    device: 0

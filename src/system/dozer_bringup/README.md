@@ -32,3 +32,14 @@ ros2 launch dozer_bringup dozer.launch.py \
 有桌面环境时，可在启动命令中加入 `use_viewer:=true`，弹出两路检测画面。
 当前相机和算法已经运行时，只需另开终端执行
 `ros2 run dozer_perception detection_viewer.py`，无需重复启动驱动。
+
+在本机桌面终端可直接运行工作空间根目录的
+`./start_detection_viewer.sh`。脚本检查图形会话、模型和 `/dev/video0/1`，
+构建所需包后启动两路相机、`can0` 上的前左毫米波雷达、YOLO、雷达视觉融合
+与带框预览窗口，并弹出前左雷达坐标系的实时俯视图；按 Ctrl+C 退出。
+首次使用 GPU 推理时，在工作空间根目录运行 `./setup_gpu_inference.sh` 建立
+`.venv-gpu`；依赖仅安装在该环境中，启动脚本会先验证 CUDA 卷积。
+需要先将实际权重放在 `src/perception/dozer_perception/model/best.pt`，
+并确保相机设备未被其他进程占用，`can0` 已配置且可用。
+绿色检测框表示匹配到雷达目标，黄色框表示仅由 YOLO 检出。
+当前内外参是联调初值，雷达与检测框的匹配结果须在标定后使用。

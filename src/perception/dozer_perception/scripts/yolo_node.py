@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image
 from dozer_msgs.msg import Detection2D, Detection2DArray
 
@@ -19,19 +19,28 @@ class YoloNode(Node):
         self.declare_parameter('source_id', 'front_left')
         self.declare_parameter('model_path', '')
         self.declare_parameter('confidence', 0.25)
+        self.declare_parameter('device', 0)
         path = self.get_parameter('model_path').value
         if not path:
             raise ValueError('model_path must point to a YOLO model or TensorRT engine')
         if not Path(path).is_file():
             raise FileNotFoundError(f'YOLO model not found: {path}')
         from ultralytics import YOLO
+        import torch
+        self.device = int(self.get_parameter('device').value)
+        if not torch.cuda.is_available():
+            raise RuntimeError('GPU inference requested, but PyTorch cannot access CUDA')
+        # The available cuDNN build has no convolution engine for this Orin; native CUDA works.
+        torch.backends.cudnn.enabled = False
         self.model = YOLO(path)
+        self.get_logger().info(f'YOLO inference device: {self.device}')
         self.seq = 0
         self.publisher = self.create_publisher(
             Detection2DArray, self.get_parameter('detections_topic').value, 10)
         self.subscription = self.create_subscription(
             Image, self.get_parameter('image_topic').value, self.on_image,
-            qos_profile_sensor_data)
+            QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=1,
+                       reliability=ReliabilityPolicy.BEST_EFFORT))
 
     def on_image(self, msg):
         encodings = {'rgb8': (3, True), 'bgr8': (3, False),
@@ -53,7 +62,7 @@ class YoloNode(Node):
             image = image[:, :, ::-1]
         image = np.ascontiguousarray(image)
         result = self.model.predict(image, conf=self.get_parameter('confidence').value,
-                                    verbose=False)[0]
+                                    device=self.device, verbose=False)[0]
         output = Detection2DArray()
         output.header = msg.header
         output.source_id = self.get_parameter('source_id').value

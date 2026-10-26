@@ -2,6 +2,7 @@
 """Classify a combined radar snapshot using detections from three cameras."""
 
 import math
+from collections import defaultdict, deque
 
 import rclpy
 from rclpy.node import Node
@@ -32,27 +33,24 @@ def transform_point(tf, p):
     return rotated[0] + t.x, rotated[1] + t.y, rotated[2] + t.z
 
 
-def project(point, camera):
-    x, y, z = point
-    if z <= 0 or not all(math.isfinite(value) for value in point):
+def project_horizontal(point, camera):
+    x, _, z = point
+    if z <= 0 or not math.isfinite(x) or not math.isfinite(z):
         return None
-    return (camera['fx'] * x / z + camera['cx']) / camera['width'], \
-           (camera['fy'] * y / z + camera['cy']) / camera['height']
+    return (camera['fx'] * x / z + camera['cx']) / camera['width']
 
 
 def associate(points, detections, camera):
-    """Greedy one-to-one association for one camera; return radar index to box."""
+    """Associate by horizontal image position; radar has no target height."""
     pairs = []
     for ri, point in enumerate(points):
-        pixel = project(point, camera)
-        if pixel is None:
+        u = project_horizontal(point, camera)
+        if u is None or not 0.0 <= u <= 1.0:
             continue
-        u, v = pixel
         for di, box in enumerate(detections):
-            if box.x <= u <= box.x + box.w and box.y <= v <= box.y + box.h:
-                center_x, center_y = box.x + box.w / 2, box.y + box.h / 2
-                distance = ((u - center_x) / max(box.w, 1e-6)) ** 2 + \
-                           ((v - center_y) / max(box.h, 1e-6)) ** 2
+            if box.w > 0 and box.x <= u <= box.x + box.w:
+                center_x = box.x + box.w / 2
+                distance = abs(u - center_x) / box.w
                 pairs.append((distance, ri, di))
     result, used_radar, used_box = {}, set(), set()
     for _, ri, di in sorted(pairs):
@@ -74,13 +72,16 @@ class FusionNode(Node):
         self.declare_parameter('output_frame', 'base_link')
         self.declare_parameter('max_age_sec', 0.12)
         self.declare_parameter('stale_sec', 0.5)
+        self.declare_parameter('max_match_distance_m', 0.0)
         self.declare_parameter('publish_hz', 15.0)
         self.frame = self.get_parameter('output_frame').value
         self.max_age = float(self.get_parameter('max_age_sec').value)
         self.stale = float(self.get_parameter('stale_sec').value)
+        self.max_match_distance = float(self.get_parameter('max_match_distance_m').value)
         hz = float(self.get_parameter('publish_hz').value)
-        if min(self.max_age, self.stale, hz) <= 0:
-            raise ValueError('max_age_sec, stale_sec and publish_hz must be positive')
+        if min(self.max_age, self.stale, hz) <= 0 or self.max_match_distance < 0:
+            raise ValueError('max_age_sec, stale_sec and publish_hz must be positive; '
+                             'max_match_distance_m must be non-negative')
         self.cameras = {}
         for name in self.get_parameter('camera_names').value:
             for key, default in (('frame', name + '_optical'), ('detections_topic',
@@ -96,6 +97,8 @@ class FusionNode(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.radar = {}
+        # YOLO may finish seconds after image capture. Keep radar frames by acquisition time.
+        self.radar_history = defaultdict(lambda: deque(maxlen=900))
         self.detections = {}
         self.publisher = self.create_publisher(
             FusedDetectionArray, self.get_parameter('output_topic').value, 10)
@@ -108,9 +111,19 @@ class FusionNode(Node):
 
     def on_radar(self, msg):
         self.radar[msg.header.frame_id] = msg
+        self.radar_history[msg.header.frame_id].append(msg)
 
     def on_detections(self, name, msg):
         self.detections[name] = msg
+        target_time = seconds(msg.header.stamp)
+        active = []
+        for history in self.radar_history.values():
+            if history:
+                closest = min(history, key=lambda radar: abs(seconds(radar.header.stamp) - target_time))
+                if abs(seconds(closest.header.stamp) - target_time) <= self.max_age:
+                    active.append(closest)
+        if active:
+            self.publish_fused(active, {name: msg}, msg.header.stamp, msg.frame_seq)
 
     def lookup(self, target, source, stamp):
         try:
@@ -126,10 +139,15 @@ class FusionNode(Node):
                   if 0 <= now - seconds(msg.header.stamp) <= self.stale]
         if not active:
             return
+        stamp = max(active, key=lambda msg: seconds(msg.header.stamp)).header.stamp
+        self.publish_fused(active, self.detections, stamp)
+
+    def publish_fused(self, active, detections, stamp, frame_seq=0):
         output = FusedDetectionArray()
-        output.header.stamp = max(active, key=lambda msg: seconds(msg.header.stamp)).header.stamp
+        output.header.stamp = stamp
         output.header.frame_id = self.frame
         output.source_id = 'radar_fusion'
+        output.frame_seq = frame_seq
         entries = []
         for radar in active:
             base_tf = self.lookup(self.frame, radar.header.frame_id, radar.header.stamp)
@@ -148,13 +166,14 @@ class FusionNode(Node):
                 fused.radar_rcs = obj.rcs
                 entries.append((radar, obj, fused))
         for name, camera in self.cameras.items():
-            detection_msg = self.detections.get(name)
+            detection_msg = detections.get(name)
             if detection_msg is None or detection_msg.image_width != camera['width'] or \
                     detection_msg.image_height != camera['height']:
                 continue
             points = []
             for radar, obj, _ in entries:
-                if abs(seconds(radar.header.stamp) - seconds(detection_msg.header.stamp)) > self.max_age:
+                if abs(seconds(radar.header.stamp) - seconds(detection_msg.header.stamp)) > self.max_age or \
+                        (self.max_match_distance and not 0 <= obj.x <= self.max_match_distance):
                     points.append((math.nan, math.nan, math.nan))
                     continue
                 camera_tf = self.lookup(camera['frame'], radar.header.frame_id, radar.header.stamp)
