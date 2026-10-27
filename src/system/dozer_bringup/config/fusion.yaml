@@ -13,7 +13,7 @@ fusion_node:
     max_match_distance_m: 6.0  # 联调时只将前方 0–6 m 的雷达目标与视觉框关联
     publish_hz: 15.0
     front_left.frame: camera_front_left_optical
-    front_left.detections_topic: /perception/detections
+    front_left.detections_topic: /perception/front_left/detections
     front_left.width: 640
     front_left.height: 360
     front_left.fx: 500.0

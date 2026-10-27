@@ -15,7 +15,7 @@ class YoloNode(Node):
     def __init__(self):
         super().__init__('yolo_node')
         self.declare_parameter('image_topic', '/camera/front_left/image_small')
-        self.declare_parameter('detections_topic', '/perception/detections')
+        self.declare_parameter('detections_topic', '/perception/front_left/detections')
         self.declare_parameter('source_id', 'front_left')
         self.declare_parameter('model_path', '')
         self.declare_parameter('confidence', 0.25)

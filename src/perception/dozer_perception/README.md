@@ -3,7 +3,7 @@
 感知算法节点（感知层），只通过 topic 获取传感器数据，不链接驱动代码。负责人：待定。
 
 - 输入：当前两路 `/camera/<name>/image_small`（sensor_msgs/Image）
-- 输出：前左 `/perception/detections`，前右 `/perception/front_right/detections`（Detection2DArray，header.stamp 等于输入帧时间戳）
+- 输出：前左 `/perception/front_left/detections`，前右 `/perception/front_right/detections`（Detection2DArray，header.stamp 等于输入帧时间戳）
 - 实现：`yolo_node.py` 使用 Ultralytics YOLO；在 ROS Python 环境中安装
   `ultralytics` 及对应平台推理依赖。车端默认 `device=0`，要求 CUDA 可用；
   图像订阅只保留最新 1 帧，避免慢推理时积压旧画面。

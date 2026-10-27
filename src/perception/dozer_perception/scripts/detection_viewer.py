@@ -133,7 +133,7 @@ class DetectionViewer(Node):
         self.input_subscriptions = []
         self.image_publishers = {}
         for name, detections_topic in (
-                ('front_left', '/perception/detections'),
+                ('front_left', '/perception/front_left/detections'),
                 ('front_right', '/perception/front_right/detections')):
             self.input_subscriptions.append(self.create_subscription(
                 Image, f'/camera/{name}/image_small',

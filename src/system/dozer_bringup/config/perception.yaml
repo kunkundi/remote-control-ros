@@ -2,7 +2,7 @@
 yolo_front_left:
   ros__parameters:
     image_topic: /camera/front_left/image_small
-    detections_topic: /perception/detections
+    detections_topic: /perception/front_left/detections
     source_id: front_left
     model_path: /home/nvidia/workspace/ros2_ws/src/perception/dozer_perception/model/best.pt
     confidence: 0.25

@@ -24,7 +24,7 @@
 │  └───────────────────────────────────────────────────────────┘           │
 │        │ /camera/<name>/image_small（降采样，跨进程）                     │
 │        ▼                                                                 │
-│  [dozer_perception]   → /perception/detections                           │
+│  [dozer_perception]   → /perception/<name>/detections                    │
 │  [dozer_radar_sr73f]  can0 (SR73F × 3~4) → /radar/<name>/objects          │
 │  [dozer_fusion]       雷达 + 视觉 → /fusion/objects（后期）                │
 │  [dozer_vehicle]      /vehicle/drive_cmd → 看门狗 → CAN/串口 → 车辆        │
@@ -105,7 +105,7 @@ dozer_xxx/
 | `dozer_msgs` | 接口 | 接口定义 | — | — | 架构负责人 | 第一版已提交 |
 | `dozer_camera_gmsl` | 驱动 | 三路 V4L2 采集、降采样与时间戳 | 配置的 `/dev/videoN` | `/camera/<name>/image_small` | 待定 | 节点已实现，待实机取帧验证 |
 | `dozer_radar_sr73f` | 驱动 | SR73F 驱动 + 配置工具 `sr73f_config`，can0，SensorID 0-3 | can0 | `/radar/<name>/objects`、`/radar/<name>/points`、`/radar/<name>/status` | 待定 | 已实现，待硬件验证 |
-| `dozer_perception` | 感知 | 检测/感知算法 | `/camera/<name>/image_small` | `/perception/detections` | 待定 | 骨架 |
+| `dozer_perception` | 感知 | 检测/感知算法 | `/camera/<name>/image_small` | `/perception/<name>/detections` | 待定 | 已实现前左/前右检测 |
 | `dozer_fusion` | 感知 | 雷达 + 视觉融合 | 雷达、检测、tf | `/fusion/objects` | 待定 | 后期 |
 | `dozer_vehicle` | 控制 | 驾驶指令看门狗、换档、车辆接口 | `/vehicle/drive_cmd`、`/vehicle/set_gear` | `/vehicle/state` | 待定 | 骨架 |
 | `dozer_rtc_bridge` | 通信 | 视频推流、结果上传、控制下行 | 相机帧、上述 topic、DataChannel | 视频、DataChannel、`/vehicle/*` | RTC 模块负责人 | 骨架 |
@@ -127,7 +127,7 @@ dozer_xxx/
 | `/radar/<name>/objects` | `dozer_msgs/RadarObjectArray` | dozer_radar_sr73f | SensorData | 30 Hz |
 | `/radar/<name>/points` | `sensor_msgs/PointCloud2` | dozer_radar_sr73f | SensorData | 30 Hz，仅有订阅者时发布（可视化用） |
 | `/radar/<name>/status` | `dozer_msgs/RadarStatus` | dozer_radar_sr73f | Reliable | 1 Hz |
-| `/perception/detections` | `dozer_msgs/Detection2DArray` | dozer_perception | SensorData | 跟随输入 |
+| `/perception/<name>/detections` | `dozer_msgs/Detection2DArray` | dozer_perception | Reliable | 跟随输入 |
 | `/fusion/objects` | 待定 | dozer_fusion | SensorData | — |
 | `/vehicle/drive_cmd` | `dozer_msgs/DriveCommand` | dozer_rtc_bridge | BestEffort, KeepLast(1) | 跟随远端 |
 | `/vehicle/set_gear` | `dozer_msgs/srv/SetGear`（服务） | dozer_vehicle 提供 | — | 事件 |
@@ -229,7 +229,7 @@ dozer_xxx/
 1. **在 rtc-framework 内解耦 YOLO**：`DualCameraStreamingModule` 不再创建 `YoloFrameConsumer`；`YoloFrameConsumer` 通过回调输出检测结果，不直接调用 `RtcBroadcastData`。完成后现有 `rtc_edge` 行为不变。
 2. **迁移相机库**：`client/modules/camera/` 迁移到 `dozer_camera_gmsl`（第一阶段：共享库 + gtest），设备参数改由 `camera.yaml` 提供。
 3. **补全 xmake 安装产物**：保证 rtc_bridge 需要的库与头文件（`rtc_runtime`、`rtc_vision_detection_protocol`、`rtc_vehicle_control_protocol` 等）都能 `xmake install` 到 `install/`。
-4. **实现 `dozer_rtc_bridge`**：主循环改为 `rclcpp` 执行器；链接 `dozer_camera_gmsl` 取帧推流；新增订阅 `/perception/detections`、`/radar/*/objects`、`/vehicle/state` 并编码上传。
+4. **实现 `dozer_rtc_bridge`**：主循环改为 `rclcpp` 执行器；链接 `dozer_camera_gmsl` 取帧推流；新增订阅 `/perception/<name>/detections`、`/radar/*/objects`、`/vehicle/state` 并编码上传。
 5. **控制下行**：DataChannel 收到的驾驶指令解码后发布 `/vehicle/drive_cmd`，换档调用 `/vehicle/set_gear` 服务，回执按原协议返回。
 6. **迁移 YOLO** 到 `dozer_perception`（订阅 `image_small`），迁移车辆控制到 `dozer_vehicle`。
 7. **相机第二阶段**：相机与 rtc_bridge 改为 component，进程内零拷贝传帧（见第 5.3 节）。
