@@ -27,7 +27,7 @@ def generate_launch_description():
         DeclareLaunchArgument('use_mock_camera', default_value='false',
                               description='发布三路模拟图像以检查感知话题链路'),
         DeclareLaunchArgument('use_camera', default_value='false',
-                              description='启动两路真实 V4L2 相机采集节点'),
+                              description='启动六路真实 V4L2 相机采集节点'),
         DeclareLaunchArgument('use_radar', default_value='false',
                               description='启动 SR73F 雷达驱动（参数见 config/radar.yaml）'),
         DeclareLaunchArgument('use_perception', default_value='false',
@@ -53,7 +53,8 @@ def generate_launch_description():
         *[Node(package='dozer_camera_gmsl', executable='camera_gmsl_node',
                name='camera_' + name,
                parameters=[os.path.join(bringup, 'config', 'camera.yaml')],
-               condition=IfCondition(use_camera)) for name in ('front_left', 'front_right')],
+                  condition=IfCondition(use_camera)) for name in (
+                       'front_left', 'front_right', 'front', 'rear', 'left', 'right')],
 
         *[Node(package='dozer_perception', executable='yolo_node.py', name='yolo_' + name,
                parameters=[os.path.join(bringup, 'config', 'perception.yaml')],

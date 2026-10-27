@@ -11,9 +11,23 @@
 ## 当前实机联调
 
 `fusion.yaml` 的 640x360 内参和 `extrinsics.yaml` 的安装位姿是**未经标定的联调初值**。
-它们只用于验证节点启动、TF 查询和话题流转。当前实机配置使用 `video0/1`
-和 SensorID 0 雷达。相机物理方向仍需核对；真实相机节点需要独占 V4L2 设备，
-不能与 `rtc_edge` 同时采集。实车使用前须替换内外参。
+它们只用于验证节点启动、TF 查询和话题流转。相机采集配置使用 `video0` 至
+`video5`，依次对应 `front_left`、`front_right`、`front`、`rear`、`left`、
+`right`；此映射的物理方向仍需核对。雷达使用 SensorID 0。
+真实相机节点独占 V4L2 设备，ROS 版 `dozer_rtc_edge` 订阅图像而不重复采集。
+新增四路仅接入图像采集和 RTC 话题，感知与融合仍保留现有配置；新增相机的
+内外参须在标定后补充。实车使用前须替换现有联调内外参。
+
+启动六路真实相机采集：
+
+```bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 launch dozer_bringup dozer.launch.py use_camera:=true
+```
+
+每路发布 `/camera/<camera_name>/image_small`，默认尺寸为 640x360，最高 5 Hz。
+使用前确认六个设备均支持 1920x1080 采集且未被其他进程占用。
 
 使用模拟三雷达和三相机跑通话题链路：
 
@@ -35,7 +49,7 @@ ros2 launch dozer_bringup dozer.launch.py \
 
 在本机桌面终端可直接运行工作空间根目录的
 `./start_detection_viewer.sh`。脚本检查图形会话、模型和 `/dev/video0/1`，
-构建所需包后启动两路相机、`can0` 上的前左毫米波雷达、YOLO、雷达视觉融合
+构建所需包后启动六路相机、`can0` 上的前左毫米波雷达、两路 YOLO、雷达视觉融合
 与带框预览窗口，并弹出前左雷达坐标系的实时俯视图；按 Ctrl+C 退出。
 首次使用 GPU 推理时，在工作空间根目录运行 `./setup_gpu_inference.sh` 建立
 `.venv-gpu`；依赖仅安装在该环境中，启动脚本会先验证 CUDA 卷积。

@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>dozer_rtc_edge</name>
+  <version>0.1.0</version>
+  <description>Standalone RTC edge application built from source with ament_cmake.</description>
+  <maintainer email="todo@example.com">TODO</maintainer>
+  <license>Proprietary</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <test_depend>rcl_interfaces</test_depend>
+  <exec_depend>dozer_camera_gmsl</exec_depend>
+  <depend>libopencv-dev</depend>
+  <depend>libssl-dev</depend>
+  <depend>libasio-dev</depend>
+  <depend>nlohmann-json-dev</depend>
+  <exec_depend>ros2launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

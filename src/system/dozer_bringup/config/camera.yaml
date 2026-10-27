@@ -1,6 +1,6 @@
-# 当前实机联调只用 video0/video1；物理安装方向尚未核对。
-# 两路 1920x1080 以 3 倍降采样发布 640x360 BGR 图像。
-# rtc_edge 与本节点不可同时占用这些设备。
+# 六路相机暂按 video0-video5 映射；物理安装方向尚未核对。
+# 每路 1920x1080 以 3 倍降采样发布 640x360 BGR 图像，最高 5 Hz。
+# ROS 版 dozer_rtc_edge 订阅 image_small，不直接占用设备。
 camera_front_left:
   ros__parameters:
     camera_name: front_left
@@ -13,6 +13,38 @@ camera_front_right:
   ros__parameters:
     camera_name: front_right
     device: /dev/video1
+    width: 1920
+    height: 1080
+    small_image_downscale: 3
+    small_image_max_fps: 5.0
+camera_front:
+  ros__parameters:
+    camera_name: front
+    device: /dev/video2
+    width: 1920
+    height: 1080
+    small_image_downscale: 3
+    small_image_max_fps: 5.0
+camera_rear:
+  ros__parameters:
+    camera_name: rear
+    device: /dev/video3
+    width: 1920
+    height: 1080
+    small_image_downscale: 3
+    small_image_max_fps: 5.0
+camera_left:
+  ros__parameters:
+    camera_name: left
+    device: /dev/video4
+    width: 1920
+    height: 1080
+    small_image_downscale: 3
+    small_image_max_fps: 5.0
+camera_right:
+  ros__parameters:
+    camera_name: right
+    device: /dev/video5
     width: 1920
     height: 1080
     small_image_downscale: 3

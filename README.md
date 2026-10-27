@@ -58,7 +58,7 @@
 
 ```text
 ~/workspace/
-├── rtc-framework/                  # 现有 RTC 工程（xmake 构建），保持独立，不复制进本工作空间
+├── rtc-framework/                  # RTC SDK 上游，底层 vtsrtc 仍作为外部依赖
 │   └── install/                    # xmake install 产物：libvtsrtc、rtc_* 静态库与头文件
 └── ros2_ws/                        # 本工作空间（git 仓库）
     ├── README.md                   # 本文件：统一约定
@@ -75,12 +75,18 @@
         │   └── dozer_vehicle/      # 车辆控制与安全看门狗
         ├── comm/
         │   └── dozer_rtc_bridge/   # RTC 网关（由 rtc_edge 改造而来）
+        ├── remote_drive/
+        │   └── dozer_rtc_edge/     # 独立边缘端，colcon 构建，订阅 ROS 相机图像
         └── system/
             ├── dozer_bringup/      # launch、config/*.yaml、传感器外参、systemd
             └── dozer_tools/        # 模拟数据发布器、录包脚本等开发工具
 ```
 
 分类目录只用于组织，colcon 会递归查找包；包名全局唯一，以 `dozer_` 开头。
+
+`dozer_rtc_edge` 是独立边缘端移植包，复用 `dozer_camera_gmsl` 发布的图像，不重复采集设备。
+运行配置集中在 `dozer_bringup/config/rtc_edge/`，构建、依赖与当前限制见 [src/remote_drive/dozer_rtc_edge/README.md](src/remote_drive/dozer_rtc_edge/README.md)。
+它尚未完成 ROS 检测结果上传与 `/vehicle/*` 翻译，不替代规划中的 `dozer_rtc_bridge`。
 
 单个 C++ 包内部结构：
 
