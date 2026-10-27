@@ -38,41 +38,37 @@ find_library(VTSRTC_LIBRARY NAMES vtsrtc.aarch64 vtsrtc HINTS "${RTC_FRAMEWORK_I
 add_library(vtsrtc_sdk SHARED IMPORTED)
 set_target_properties(vtsrtc_sdk PROPERTIES IMPORTED_LOCATION "${VTSRTC_LIBRARY}" INTERFACE_INCLUDE_DIRECTORIES "${VTSRTC_INCLUDE_DIR}")
 
-set(client "${CMAKE_CURRENT_SOURCE_DIR}/upstream/client")
-set(modules "${client}/modules")
-set(app "${client}/apps/rtc_edge")
+set(app "${CMAKE_CURRENT_SOURCE_DIR}/src/app")
 add_library(edge_dependencies INTERFACE)
-foreach(module audio camera dog edge logging runtime vehicle vision)
-  target_include_directories(edge_dependencies INTERFACE "${modules}/${module}/include")
-endforeach()
+target_include_directories(edge_dependencies INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 foreach(protocol vehicle vision)
-  target_include_directories(edge_dependencies INTERFACE "${client}/protocols/${protocol}/include" "${client}/protocols/${protocol}/generated")
+  target_include_directories(edge_dependencies INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/protocols/${protocol}/generated")
 endforeach()
 target_include_directories(edge_dependencies INTERFACE "${NANOPB_INCLUDE_DIR}" "${ASIO_INCLUDE_DIR}" "${SIMPLE_WS_INCLUDE_DIR}" ${OpenCV_INCLUDE_DIRS})
 target_compile_definitions(edge_dependencies INTERFACE ASIO_STANDALONE USE_STANDALONE_ASIO)
-target_include_directories(edge_dependencies INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/include" "${LIBYUV_INCLUDE_DIR}")
+target_include_directories(edge_dependencies INTERFACE "${LIBYUV_INCLUDE_DIR}")
 target_link_libraries(edge_dependencies INTERFACE vtsrtc_sdk Threads::Threads nlohmann_json::nlohmann_json SDL3::SDL3 OpenSSL::SSL OpenSSL::Crypto "${NANOPB_LIBRARY}" ${OpenCV_LIBS})
 
 add_library(edge_support STATIC
-  src/ros_logging.cpp
-  ${modules}/runtime/src/process_runtime.cpp
-  ${modules}/runtime/src/rtc_session.cpp
-  ${modules}/audio/src/audio_device.cpp
-  ${modules}/vehicle/src/vehicle_control_interface.cpp
-  ${modules}/vehicle/src/vehicle_control_module.cpp
-  ${modules}/dog/src/dog_command_forwarder.cpp
-  ${client}/protocols/vehicle/generated/rtc_vehicle.pb.c
-  ${client}/protocols/vehicle/src/vehicle_control_protocol.cpp
-  ${client}/protocols/vision/generated/vision_detection.pb.c
-  ${client}/protocols/vision/src/vision_detection_codec.cpp
-  ${client}/protocols/vision/src/view_control_protocol.cpp)
+  src/ros/ros_logging.cpp
+  src/runtime/process_runtime.cpp
+  src/runtime/rtc_session.cpp
+  src/audio/audio_device.cpp
+  src/vehicle/vehicle_control_interface.cpp
+  src/vehicle/vehicle_control_module.cpp
+  src/dog/dog_command_forwarder.cpp
+  protocols/vehicle/generated/rtc_vehicle.pb.c
+  src/protocols/vehicle/vehicle_control_protocol.cpp
+  protocols/vision/generated/vision_detection.pb.c
+  src/protocols/vision/vision_detection_codec.cpp
+  src/protocols/vision/view_control_protocol.cpp)
 target_link_libraries(edge_support edge_dependencies)
 ament_target_dependencies(edge_support rclcpp)
 
 add_executable(rtc_edge
   ${app}/main.cpp ${app}/edge_options.cpp ${app}/edge_application.cpp ${app}/video_send_planner.cpp
-  src/ros_image_source.cpp
-  src/ros_camera_streaming.cpp)
+  src/ros/ros_image_source.cpp
+  src/ros/ros_camera_streaming.cpp)
 target_link_libraries(rtc_edge edge_support "${LIBYUV_LIBRARY}")
 ament_target_dependencies(rtc_edge rclcpp sensor_msgs)
 get_filename_component(vtsrtc_library_dir "${VTSRTC_LIBRARY}" DIRECTORY)
@@ -94,21 +90,21 @@ if(BUILD_TESTING)
   endfunction()
   enable_testing()
   find_package(rcl_interfaces REQUIRED)
-  edge_test(ros_logging_tests test/ros_logging_tests.cpp)
+  edge_test(ros_logging_tests test/ros/ros_logging_tests.cpp)
   target_link_libraries(ros_logging_tests PRIVATE ${rcl_interfaces_TARGETS})
   add_test(NAME ros_logging_preinitialized_tests COMMAND ros_logging_tests --preinitialized)
   set_tests_properties(ros_logging_tests ros_logging_preinitialized_tests PROPERTIES
     TIMEOUT 15
     FAIL_REGULAR_EXPRESSION "logging was initialized more than once")
-  edge_test(rtc_edge_options_tests ${app}/edge_options.cpp ${app}/edge_options_tests.cpp)
+  edge_test(rtc_edge_options_tests ${app}/edge_options.cpp test/app/edge_options_tests.cpp)
   file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/no_config")
   add_test(NAME rtc_edge_default_config_tests COMMAND rtc_edge_options_tests --check-default-config)
   set_tests_properties(rtc_edge_default_config_tests PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/no_config")
-  edge_test(rtc_edge_streaming_tests ${app}/video_send_planner.cpp ${app}/video_send_planner_tests.cpp)
-  edge_test(rtc_vehicle_control_protocol_tests ${client}/protocols/vehicle/tests/vehicle_control_protocol_tests.cpp)
-  edge_test(rtc_vehicle_control_module_tests ${modules}/vehicle/tests/vehicle_control_module_tests.cpp)
-  edge_test(rtc_vision_view_control_protocol_tests ${client}/protocols/vision/tests/view_control_protocol_tests.cpp)
-  add_executable(ros_image_source_tests test/ros_image_source_tests.cpp src/ros_image_source.cpp)
+  edge_test(rtc_edge_streaming_tests ${app}/video_send_planner.cpp test/app/video_send_planner_tests.cpp)
+  edge_test(rtc_vehicle_control_protocol_tests test/protocols/vehicle/vehicle_control_protocol_tests.cpp)
+  edge_test(rtc_vehicle_control_module_tests test/vehicle/vehicle_control_module_tests.cpp)
+  edge_test(rtc_vision_view_control_protocol_tests test/protocols/vision/view_control_protocol_tests.cpp)
+  add_executable(ros_image_source_tests test/ros/ros_image_source_tests.cpp src/ros/ros_image_source.cpp)
   target_include_directories(ros_image_source_tests PRIVATE include ${OpenCV_INCLUDE_DIRS})
   target_link_libraries(ros_image_source_tests ${OpenCV_LIBS} Threads::Threads)
   ament_target_dependencies(ros_image_source_tests rclcpp sensor_msgs)

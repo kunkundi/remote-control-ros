@@ -1,12 +1,45 @@
 # dozer_rtc_edge
 
-独立边缘端应用，源码从 `rtc-framework/client` 移植，使用本工作空间的 colcon/ament_cmake 编译，不调用 xmake。位于 `src/remote_drive/`，不属于纯通信层。上游文件集中在 `upstream/client/`；ROS 输入适配位于本包 `src/`。
+独立远程驾驶边缘端应用，源码从 `rtc-framework/client` 移植，使用本工作空间的 colcon/ament_cmake 编译，不调用 xmake。位于 `src/remote_drive/`，不属于纯通信层。移植代码按本包职责组织，不再保留上游的应用/模块目录套层。
+
+## 目录结构
+
+```text
+dozer_rtc_edge/
+|-- CMakeLists.txt
+|-- package.xml
+|-- README.md
+|-- include/
+|   |-- dozer_rtc_edge/    # ROS 图像输入与 SDK 配置适配
+|   `-- rtc_*/            # 移植模块头文件，保留原有包含路径
+|-- src/
+|   |-- app/              # 主入口、应用编排、参数、视频发送规划
+|   |-- ros/              # ROS 图像、视频输入与日志实现
+|   |-- runtime/          # 进程生命周期与 RTC 会话
+|   |-- audio/            # 音频设备
+|   |-- vehicle/          # 车辆控制接口与安全看门狗
+|   |-- dog/              # 可选指令转发
+|   |-- protocols/        # 控制与视觉协议编解码
+|   `-- vision/           # 保留的本地视觉实现，当前不参与构建
+|-- protocols/
+|   |-- vehicle/          # schema/ 定义与 generated/ nanopb 代码
+|   `-- vision/           # schema/ 定义与 generated/ nanopb 代码
+|-- test/                 # 按 app、ros、vehicle、protocols 等职责组织
+`-- docs/upstream/        # 移植来源的参考说明，不作为当前构建入口
+```
+
+应用私有头文件与入口放在 `src/app/`，跨模块头文件统一放在 `include/`。
+保留 `rtc_runtime/...` 等包含路径和命名空间，避免目录调整波及业务接口。
+协议定义与生成文件成组保存，不手工修改 nanopb 生成代码；编解码实现和测试分别
+位于 `src/protocols/` 与 `test/protocols/`。原先未启用的移植源码和测试仍保留，
+实际构建与执行范围以 `CMakeLists.txt` 为准。
+运行配置继续集中在 `dozer_bringup/config/rtc_edge/`，不在本包复制维护另一份源配置。
 
 ## 相机复用
 
 由 `dozer_camera_gmsl` 独占相机设备，edge 只订阅 ROS `sensor_msgs/Image`，不打开 `/dev/video*`。当前支持偶数尺寸的 `bgr8`/`rgb8` 和带行填充的图像。输入 QoS 为 SensorData、KeepLast(1)，只缓存最新帧。双目尺寸必须一致，时间戳差不得超过 30 ms，旧帧丢弃后等待新帧；左右图横向拼接并转成 I420 后发送。
 
-默认订阅双目 `/camera/front_left/image_small`、`/camera/front_right/image_small`，以及四路环视 `/camera/front/image_small`、`/camera/rear/image_small`、`/camera/left/image_small`、`/camera/right/image_small`。现有相机配置仅发布双目，每路为 640x360、5 Hz，输出双目为 1280x360；四路环视需要对应 ROS 图像发布节点上线。此路径经 DDS 和 CPU 图像转换，不是全分辨率零拷贝；不得据此声称达到原直接采集版本的性能。
+默认订阅双目 `/camera/front_left/image_small`、`/camera/front_right/image_small`，以及四路环视 `/camera/front/image_small`、`/camera/rear/image_small`、`/camera/left/image_small`、`/camera/right/image_small`。现有相机配置发布这六路话题，每路为 640x360、最高 5 Hz，输出双目为 1280x360；采集节点需要单独启动。此路径经 DDS 和 CPU 图像转换，不是全分辨率零拷贝；不得据此声称达到原直接采集版本的性能。
 
 `left_device`、`right_device` 及环视 `*_device` 字段填写绝对 ROS topic，不接受设备路径或本地 YUV 文件。空环视字段禁用该路。相机配置仅保留 topic 字段，已移除无效的宽高、缓冲区、超时、预热和帧等待参数及其解析逻辑。实际尺寸来自 ROS 图像消息；采集尺寸和发布频率由相机驱动配置控制。
 
