@@ -14,9 +14,8 @@ dozer_rtc_edge/
 |   `-- rtc_*/            # 移植模块头文件，保留原有包含路径
 |-- src/
 |   |-- app/              # 主入口、应用编排、参数、视频发送规划
-|   |-- ros/              # ROS 图像、视频输入与日志实现
+|   |-- ros/              # ROS 图像、音频输入与日志实现
 |   |-- runtime/          # 进程生命周期与 RTC 会话
-|   |-- audio/            # 音频设备
 |   |-- vehicle/          # 车辆控制接口与安全看门狗
 |   |-- dog/              # 可选指令转发
 |   |-- protocols/        # 控制与视觉协议编解码
@@ -35,6 +34,11 @@ dozer_rtc_edge/
 实际构建与执行范围以 `CMakeLists.txt` 为准。
 运行配置继续集中在 `dozer_bringup/config/rtc_edge/`，不在本包复制维护另一份源配置。
 
+音频设备枚举、PCM 采集与播放由 `src/drivers/dozer_audio/` 独立驱动包提供。
+采集由独立 `audio_capture_node` 负责，本包只订阅 PCM 话题、发送 RTC 音频和编排远端播放，不再打开录音设备、直接编译音频设备实现或查找 SDL3。
+原有 `rtc_audio/audio_device.h` 包含路径与接口保持不变，由驱动包导出的 CMake target 提供。
+构建本包及工作空间内依赖时使用 `colcon build --packages-up-to dozer_rtc_edge`。
+
 ## 相机复用
 
 由 `dozer_camera_gmsl` 独占相机设备，edge 只订阅 ROS `sensor_msgs/Image`，不打开 `/dev/video*`。当前支持偶数尺寸的 `bgr8`/`rgb8` 和带行填充的图像。输入 QoS 为 SensorData、KeepLast(1)，只缓存最新帧。双目尺寸必须一致，时间戳差不得超过 30 ms，旧帧丢弃后等待新帧；左右图横向拼接并转成 I420 后发送。
@@ -47,16 +51,16 @@ dozer_rtc_edge/
 
 ```sh
 source /opt/ros/humble/setup.bash
-colcon build --packages-select dozer_rtc_edge --cmake-args -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
-colcon test --packages-select dozer_rtc_edge --event-handlers console_direct+
+colcon build --packages-up-to dozer_rtc_edge dozer_bringup --cmake-args -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+colcon test --packages-select dozer_audio dozer_rtc_edge --event-handlers console_direct+
 colcon test-result --verbose
 ```
 
-需要 SDL3、nanopb 0.4.9、libyuv、OpenCV、nlohmann_json、Asio、OpenSSL 和外部 vtsrtc C ABI SDK。默认 SDK 位于 `~/workspace/rtc-framework/install`，可通过 `RTC_FRAMEWORK_INSTALL` 覆盖；可选 rosbridge 转发器还使用 `SIMPLE_WS_INCLUDE_DIR` 指定的 Simple-WebSocket-Server 头文件。系统依赖优先按 CMake 搜索规则查找；本机已安装的 xmake 包缓存仅作为搜索提示，可用 `RTC_DEPENDENCY_CACHE` 覆盖，也可通过 `CMAKE_PREFIX_PATH` 指定其他安装位置。第三方库和 SDK 不复制进仓库。
+需要工作空间内的 `dozer_audio`，以及 nanopb 0.4.9、libyuv、OpenCV、nlohmann_json、Asio、OpenSSL 和外部 vtsrtc C ABI SDK。SDL3 由 `dozer_audio` 查找和导出，其可选缓存路径由 `DOZER_AUDIO_DEPENDENCY_CACHE` 控制。默认 SDK 位于 `~/workspace/rtc-framework/install`，可通过 `RTC_FRAMEWORK_INSTALL` 覆盖；可选 rosbridge 转发器还使用 `SIMPLE_WS_INCLUDE_DIR` 指定的 Simple-WebSocket-Server 头文件。系统依赖优先按 CMake 搜索规则查找；本机已安装的 xmake 包缓存仅作为搜索提示，可用 `RTC_DEPENDENCY_CACHE` 覆盖其他依赖的缓存路径，也可通过 `CMAKE_PREFIX_PATH` 指定其他安装位置。第三方库和 SDK 不复制进仓库。
 
 ## 运行
 
-先启动现有 ROS 相机 launch。确认 `dozer_bringup/config/rtc_edge/rtc.cfg` 中与上游对齐的信令地址及 ICE 配置适用于当前部署。随后在工作空间根目录执行：
+先启动现有 ROS 相机 launch；启用音频输入时，另一个终端启动 `ros2 launch dozer_bringup audio.launch.py`，或在总启动入口使用 `use_audio:=true`。确认 `dozer_bringup/config/rtc_edge/rtc.cfg` 中与上游对齐的信令地址及 ICE 配置适用于当前部署。随后在工作空间根目录执行：
 
 ```sh
 source install/setup.bash
@@ -65,7 +69,18 @@ ros2 run dozer_rtc_edge rtc_edge --config "$PWD/src/system/dozer_bringup/config/
 
 也可以直接执行 `ros2 run dozer_rtc_edge rtc_edge`，默认从可执行文件附近读取安装的配置。构建时会将集中配置复制到构建和安装目录，兼容普通安装与 `--symlink-install`；修改源配置后需重新构建 `dozer_rtc_edge`，或使用上述 `--config` 直接指定源配置。
 
-配置集中在 dozer_bringup，不自动启动第二套相机。RTC 服务、ICE、编码和音频设置与本机 rtc-framework 配置对齐；保留 ROS 相机话题、输入尺寸和车辆调试模式，不引入控制台配置。配置包含 TURN 认证信息，不应公开分发。配置订阅双目和四路环视。所有相机输入共享进程默认 ROS context；停止单路输入不关闭共享 context。每路输入仍有独立节点和执行器。相机话题仍建议在配置中填写；ROS 命令行参数由 rclcpp 统一处理。
+配置集中在 dozer_bringup，不自动启动第二套相机或麦克风采集。RTC 服务、ICE、编码和输出音频设置沿用本机 rtc-framework 部署；保留 ROS 相机话题和车辆调试模式，不引入控制台配置。配置包含 TURN 认证信息，不应公开分发。配置订阅双目和四路环视。相机与音频输入共享进程默认 ROS context；停止单路输入不关闭共享 context。每路输入仍有独立节点和执行器。ROS 命令行参数由 rclcpp 统一处理。
+
+## 音频订阅
+
+`edge.audio.input_enabled` 控制是否发送采集音频，`input_topic` 默认 `/audio/capture`，
+消息类型为 `dozer_msgs/msg/AudioFrame`。输入 QoS 为 SensorData、KeepLast(2)，收到完整
+10 ms、16 位有符号 PCM 后同步调用 RTC 发送接口；错误采样率、声道、帧数或字节数会丢弃并限频告警。
+采样率支持 8000、16000、32000、44100、48000 Hz，声道支持 1 或 2；格式来自消息。
+设备名、采样率、声道配置已移到 `dozer_bringup/config/audio.yaml`。
+旧配置的 `input_device`、`sample_rate`、`channels` 不再生效；没有 `input_topic` 时使用默认话题，
+不会退回直接录音。没有采集发布者时不发送输入音频，节点可晚于 edge 启动。
+`output_enabled` 和 `output_device` 仍控制 edge 进程内的远端音频播放。
 
 ## 日志
 
@@ -79,4 +94,4 @@ ros2 run dozer_rtc_edge rtc_edge --config "$PWD/src/system/dozer_bringup/config/
 
 相机相关本地 YOLO 路径已从构建移除；启用 edge YOLO 会明确报错。检测由现有 `dozer_perception` 负责，但 ROS 检测结果到 RTC DataChannel 的翻译尚未实现。`dozer_rtc_bridge` 骨架保持不变，避免混淆模块职责。
 
-测试包含上游参数、视频发送规划、控制协议、控制模块及视图协议回归，以及 ROS 图像校验、发布订阅和双目配对。构建和无硬件测试不代表已完成实机相机、远程视频或控制链路验证。
+测试包含上游参数、视频发送规划、控制协议、控制模块及视图协议回归，以及 ROS 图像校验、发布订阅和双目配对。音频订阅测试覆盖 PCM 格式、坏帧拒绝、音频与相机共享 context；`dozer_audio` 使用 SDL dummy 后端覆盖设备层和采集节点发布，不打开真实声卡。构建和无硬件测试不代表已完成实机相机、音频、远程视频或控制链路验证。

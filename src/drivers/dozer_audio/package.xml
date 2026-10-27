@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>dozer_audio</name>
+  <version>0.1.0</version>
+  <description>Reusable SDL3 PCM audio capture and playback driver.</description>
+  <maintainer email="todo@example.com">TODO</maintainer>
+  <license>Proprietary</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>libsdl3-dev</depend>
+  <depend>rclcpp</depend>
+  <depend>dozer_msgs</depend>
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

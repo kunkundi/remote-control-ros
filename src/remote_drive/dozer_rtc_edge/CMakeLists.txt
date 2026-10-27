@@ -9,18 +9,19 @@ find_package(ament_cmake REQUIRED)
 find_package(Threads REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(dozer_audio REQUIRED)
+find_package(dozer_msgs REQUIRED)
 find_package(OpenCV REQUIRED COMPONENTS core imgproc)
 find_package(OpenSSL REQUIRED)
 
 set(RTC_FRAMEWORK_ROOT "$ENV{HOME}/workspace/rtc-framework" CACHE PATH "External RTC SDK root")
 set(RTC_FRAMEWORK_INSTALL "${RTC_FRAMEWORK_ROOT}/install" CACHE PATH "External vtsrtc installation")
 set(RTC_DEPENDENCY_CACHE "$ENV{HOME}/.xmake/packages" CACHE PATH "Optional preinstalled dependency cache; xmake is not invoked")
-foreach(dependency libsdl3 nanopb nlohmann_json asio libyuv)
+foreach(dependency nanopb nlohmann_json asio libyuv)
   string(SUBSTRING "${dependency}" 0 1 initial)
   file(GLOB dependency_prefixes "${RTC_DEPENDENCY_CACHE}/${initial}/${dependency}/*/*")
   list(APPEND CMAKE_PREFIX_PATH ${dependency_prefixes})
 endforeach()
-find_package(SDL3 CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG QUIET)
 if(NOT TARGET nlohmann_json::nlohmann_json)
   find_path(JSON_INCLUDE_DIR nlohmann/json.hpp REQUIRED)
@@ -47,13 +48,12 @@ endforeach()
 target_include_directories(edge_dependencies INTERFACE "${NANOPB_INCLUDE_DIR}" "${ASIO_INCLUDE_DIR}" "${SIMPLE_WS_INCLUDE_DIR}" ${OpenCV_INCLUDE_DIRS})
 target_compile_definitions(edge_dependencies INTERFACE ASIO_STANDALONE USE_STANDALONE_ASIO)
 target_include_directories(edge_dependencies INTERFACE "${LIBYUV_INCLUDE_DIR}")
-target_link_libraries(edge_dependencies INTERFACE vtsrtc_sdk Threads::Threads nlohmann_json::nlohmann_json SDL3::SDL3 OpenSSL::SSL OpenSSL::Crypto "${NANOPB_LIBRARY}" ${OpenCV_LIBS})
+target_link_libraries(edge_dependencies INTERFACE vtsrtc_sdk Threads::Threads nlohmann_json::nlohmann_json dozer_audio::dozer_audio OpenSSL::SSL OpenSSL::Crypto "${NANOPB_LIBRARY}" ${OpenCV_LIBS})
 
 add_library(edge_support STATIC
   src/ros/ros_logging.cpp
   src/runtime/process_runtime.cpp
   src/runtime/rtc_session.cpp
-  src/audio/audio_device.cpp
   src/vehicle/vehicle_control_interface.cpp
   src/vehicle/vehicle_control_module.cpp
   src/dog/dog_command_forwarder.cpp
@@ -67,10 +67,12 @@ ament_target_dependencies(edge_support rclcpp)
 
 add_executable(rtc_edge
   ${app}/main.cpp ${app}/edge_options.cpp ${app}/edge_application.cpp ${app}/video_send_planner.cpp
+  src/ros/ros_context.cpp
+  src/ros/ros_audio_source.cpp
   src/ros/ros_image_source.cpp
   src/ros/ros_camera_streaming.cpp)
 target_link_libraries(rtc_edge edge_support "${LIBYUV_LIBRARY}")
-ament_target_dependencies(rtc_edge rclcpp sensor_msgs)
+ament_target_dependencies(rtc_edge rclcpp sensor_msgs dozer_msgs)
 get_filename_component(vtsrtc_library_dir "${VTSRTC_LIBRARY}" DIRECTORY)
 set_target_properties(rtc_edge PROPERTIES INSTALL_RPATH "${vtsrtc_library_dir}")
 install(TARGETS rtc_edge DESTINATION lib/${PROJECT_NAME})
@@ -104,13 +106,24 @@ if(BUILD_TESTING)
   edge_test(rtc_vehicle_control_protocol_tests test/protocols/vehicle/vehicle_control_protocol_tests.cpp)
   edge_test(rtc_vehicle_control_module_tests test/vehicle/vehicle_control_module_tests.cpp)
   edge_test(rtc_vision_view_control_protocol_tests test/protocols/vision/view_control_protocol_tests.cpp)
-  add_executable(ros_image_source_tests test/ros/ros_image_source_tests.cpp src/ros/ros_image_source.cpp)
+  add_executable(ros_image_source_tests test/ros/ros_image_source_tests.cpp
+    src/ros/ros_image_source.cpp src/ros/ros_context.cpp)
   target_include_directories(ros_image_source_tests PRIVATE include ${OpenCV_INCLUDE_DIRS})
   target_link_libraries(ros_image_source_tests ${OpenCV_LIBS} Threads::Threads)
   ament_target_dependencies(ros_image_source_tests rclcpp sensor_msgs)
   add_test(NAME ros_image_source_tests COMMAND ros_image_source_tests)
   add_test(NAME ros_image_source_standalone_tests COMMAND ros_image_source_tests --standalone-context)
   set_tests_properties(ros_image_source_tests ros_image_source_standalone_tests PROPERTIES
+    TIMEOUT 30
+    FAIL_REGULAR_EXPRESSION "logging was initialized more than once")
+  add_executable(ros_audio_source_tests test/ros/ros_audio_source_tests.cpp
+    src/ros/ros_audio_source.cpp src/ros/ros_context.cpp src/ros/ros_image_source.cpp)
+  target_include_directories(ros_audio_source_tests PRIVATE include ${OpenCV_INCLUDE_DIRS})
+  target_link_libraries(ros_audio_source_tests ${OpenCV_LIBS} Threads::Threads dozer_audio::dozer_audio)
+  ament_target_dependencies(ros_audio_source_tests rclcpp sensor_msgs dozer_msgs)
+  add_test(NAME ros_audio_source_tests COMMAND ros_audio_source_tests)
+  add_test(NAME ros_audio_source_standalone_tests COMMAND ros_audio_source_tests --standalone-context)
+  set_tests_properties(ros_audio_source_tests ros_audio_source_standalone_tests PROPERTIES
     TIMEOUT 30
     FAIL_REGULAR_EXPRESSION "logging was initialized more than once")
 endif()

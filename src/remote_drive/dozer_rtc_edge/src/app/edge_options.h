@@ -27,10 +27,8 @@ struct DogControlOptions {
 struct AudioOptions {
   bool input_enabled = false;
   bool output_enabled = false;
-  std::string input_device = "default";
+  std::string input_topic = "/audio/capture";
   std::string output_device = "default";
-  int sample_rate = 48000;
-  int channels = 1;
 };
 
 struct EdgeOptions {

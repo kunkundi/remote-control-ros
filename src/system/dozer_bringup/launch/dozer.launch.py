@@ -28,8 +28,16 @@ def generate_launch_description():
                               description='发布三路模拟图像以检查感知话题链路'),
         DeclareLaunchArgument('use_camera', default_value='false',
                               description='启动六路真实 V4L2 相机采集节点'),
+     DeclareLaunchArgument('use_audio', default_value='false',
+                     description='启动 PCM 音频采集节点'),
         DeclareLaunchArgument('use_radar', default_value='false',
                               description='启动 SR73F 雷达驱动（参数见 config/radar.yaml）'),
+          DeclareLaunchArgument('use_rtc_edge', default_value='false',
+                                     description='启动远程驾驶 RTC edge'),
+          DeclareLaunchArgument('rtc_config', default_value=os.path.join(
+               bringup, 'config', 'rtc_edge', 'rtc.cfg')),
+          DeclareLaunchArgument('edge_config', default_value=os.path.join(
+               bringup, 'config', 'rtc_edge', 'edge.cfg')),
         DeclareLaunchArgument('use_perception', default_value='false',
                               description='启动 YOLO 图像检测'),
         DeclareLaunchArgument('use_fusion', default_value='false',
@@ -49,6 +57,9 @@ def generate_launch_description():
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(bringup, 'launch', 'radar.launch.py')),
             condition=IfCondition(use_radar)),
+          IncludeLaunchDescription(
+               PythonLaunchDescriptionSource(os.path.join(bringup, 'launch', 'audio.launch.py')),
+               condition=IfCondition(LaunchConfiguration('use_audio'))),
 
         *[Node(package='dozer_camera_gmsl', executable='camera_gmsl_node',
                name='camera_' + name,
@@ -64,6 +75,11 @@ def generate_launch_description():
              condition=IfCondition(use_fusion)),
         Node(package='dozer_perception', executable='detection_viewer.py',
              name='detection_viewer', condition=IfCondition(use_viewer)),
+        Node(package='dozer_rtc_edge', executable='rtc_edge', name='rtc_edge',
+             output='screen',
+             arguments=['--config', LaunchConfiguration('rtc_config'),
+                        '--edge-config', LaunchConfiguration('edge_config')],
+             condition=IfCondition(LaunchConfiguration('use_rtc_edge'))),
 
         # TODO：其它模块实现后依次接入，参数统一从 config/*.yaml 读取。
         # 感知与控制

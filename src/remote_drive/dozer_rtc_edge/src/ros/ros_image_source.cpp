@@ -1,41 +1,11 @@
 #include "dozer_rtc_edge/ros_image_source.h"
+#include "dozer_rtc_edge/ros_context.h"
 
 #include <limits>
 #include <stdexcept>
 #include <opencv2/imgproc.hpp>
 
 namespace rtc_edge {
-namespace {
-
-class CameraRosRuntime {
- public:
-  std::shared_ptr<rclcpp::Context> Acquire() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!context_->is_valid()) {
-      context_->init(0, nullptr);
-      owns_initialization_ = true;
-    }
-    return context_;
-  }
-
-  ~CameraRosRuntime() {
-    if (owns_initialization_ && context_->is_valid()) {
-      context_->shutdown("camera runtime stopped");
-    }
-  }
-
- private:
-  std::shared_ptr<rclcpp::Context> context_ = rclcpp::contexts::get_global_default_context();
-  std::mutex mutex_;
-  bool owns_initialization_ = false;
-};
-
-std::shared_ptr<rclcpp::Context> AcquireCameraContext() {
-  static CameraRosRuntime runtime;
-  return runtime.Acquire();
-}
-
-}
 
 cv::Mat ImageToBgr(const sensor_msgs::msg::Image& image) {
   if (image.width == 0 || image.height == 0 || image.width % 2 || image.height % 2 ||
@@ -66,7 +36,7 @@ RosImageSource::RosImageSource(const std::vector<std::string>& topics) {
       throw std::invalid_argument("Camera input must be an absolute ROS image topic, not a device: " + topic);
     }
   }
-  context_ = AcquireCameraContext();
+  context_ = AcquireRosContext();
   rclcpp::NodeOptions options;
   options.context(context_);
   static std::atomic<uint64_t> instance{0};

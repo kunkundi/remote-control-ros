@@ -6,6 +6,7 @@
 #include <array>
 
 #include "rtc_audio/audio_device.h"
+#include "dozer_rtc_edge/ros_audio_source.h"
 #include "rtc_edge/camera_video_sources.h"
 #include "rtc_edge/single_camera_streaming_module.h"
 #include "rtc_logging/rtc_logging.h"
@@ -505,13 +506,9 @@ class EdgeAudioModule {
     }
 
     if (options_.input_enabled) {
-      rtc_audio::AudioCaptureOptions capture_options;
-      capture_options.device_name = options_.input_device;
-      capture_options.sample_rate = options_.sample_rate;
-      capture_options.channels = options_.channels;
-      capture_options.frame_duration_ms = 10;
-      const bool started = capture_.Start(
-          capture_options,
+      try {
+        input_ = std::make_unique<rtc_edge::RosAudioSource>(
+          options_.input_topic,
           [this](const rtc_audio::AudioFrameView& frame) {
             if (rtc_session_ != nullptr) {
               rtc_session_->SendAudioFrame(
@@ -519,20 +516,20 @@ class EdgeAudioModule {
                   frame.sample_rate, frame.number_of_channels,
                   frame.number_of_frames);
             }
-          },
-          error_message);
-      if (!started) {
+          });
+      } catch (const std::exception& error) {
+        if (error_message != nullptr) { *error_message = error.what(); }
         Stop();
         return false;
       }
-      rtc_logging::LogInfo(std::string("Audio input started: ") +
-                           options_.input_device);
+      rtc_logging::LogInfo(std::string("ROS audio input subscribed: ") +
+                           options_.input_topic);
     }
     return true;
   }
 
   void Stop() {
-    capture_.Stop();
+    input_.reset();
     playback_.Stop();
     rtc_session_ = nullptr;
   }
@@ -559,7 +556,7 @@ class EdgeAudioModule {
  private:
   AudioOptions options_;
   RtcSession* rtc_session_ = nullptr;
-  rtc_audio::AudioCapture capture_;
+  std::unique_ptr<rtc_edge::RosAudioSource> input_;
   rtc_audio::AudioPlayback playback_;
 };
 

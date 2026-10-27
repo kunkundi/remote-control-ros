@@ -8,6 +8,8 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
   <depend>rclcpp</depend>
   <depend>sensor_msgs</depend>
+  <depend>dozer_audio</depend>
+  <depend>dozer_msgs</depend>
   <test_depend>rcl_interfaces</test_depend>
   <exec_depend>dozer_camera_gmsl</exec_depend>
   <depend>libopencv-dev</depend>

@@ -1,0 +1,7 @@
+audio_capture:
+  ros__parameters:
+    device_name: default
+    sample_rate: 48000
+    channels: 1
+    frame_id: microphone
+    topic: /audio/capture

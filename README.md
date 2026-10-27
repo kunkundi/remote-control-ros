@@ -37,7 +37,7 @@
 | 层 | 职责 | 包 |
 |---|---|---|
 | 接口层 `interfaces/` | 消息与服务定义 | `dozer_msgs` |
-| 驱动层 `drivers/` | 读硬件、解码、打时间戳、发布原始数据 | `dozer_camera_gmsl`、`dozer_radar_sr73f`，以后的激光雷达/IMU/GNSS/底盘 CAN 等 |
+| 驱动层 `drivers/` | 读硬件、解码、打时间戳、发布原始数据 | `dozer_audio`、`dozer_camera_gmsl`、`dozer_radar_sr73f`，以后的激光雷达/IMU/GNSS/底盘 CAN 等 |
 | 感知层 `perception/` | 检测、跟踪、融合等算法 | `dozer_perception`、`dozer_fusion` |
 | 控制层 `control/` | 车辆控制与安全看门狗 | `dozer_vehicle` |
 | 通信层 `comm/` | 与远程驾驶台的通信 | `dozer_rtc_bridge` |
@@ -66,6 +66,7 @@
         ├── interfaces/
         │   └── dozer_msgs/         # 接口定义（msg/srv），修改需全员评审
         ├── drivers/
+        │   ├── dozer_audio/        # PCM 音频采集节点与播放驱动库
         │   ├── dozer_camera_gmsl/  # GMSL 相机（8 路 V4L2）
         │   └── dozer_radar_sr73f/  # SR73F 毫米波雷达（SocketCAN）
         ├── perception/
@@ -85,6 +86,7 @@
 分类目录只用于组织，colcon 会递归查找包；包名全局唯一，以 `dozer_` 开头。
 
 `dozer_rtc_edge` 是独立边缘端移植包，复用 `dozer_camera_gmsl` 发布的图像，不重复采集设备。
+音频由 `dozer_audio` 的 `audio_capture_node` 独占采集，发布 `/audio/capture`，edge 通过订阅接入 RTC，不再打开麦克风。使用 `ros2 launch dozer_bringup audio.launch.py` 或总启动入口的 `use_audio:=true` 启动；设备参数见 `dozer_bringup/config/audio.yaml`。远端音频播放仍由 edge 调用驱动库。
 运行配置集中在 `dozer_bringup/config/rtc_edge/`，构建、依赖与当前限制见 [src/remote_drive/dozer_rtc_edge/README.md](src/remote_drive/dozer_rtc_edge/README.md)。
 它尚未完成 ROS 检测结果上传与 `/vehicle/*` 翻译，不替代规划中的 `dozer_rtc_bridge`。
 
@@ -109,6 +111,7 @@ dozer_xxx/
 | 包 | 层 | 职责 | 输入 | 输出 | 负责人 | 状态 |
 |---|---|---|---|---|---|---|
 | `dozer_msgs` | 接口 | 接口定义 | — | — | 架构负责人 | 第一版已提交 |
+| `dozer_audio` | 驱动 | PCM 采集节点、SDL3 设备枚举与播放库 | 音频设备、PCM 帧 | `/audio/capture`（100 Hz）、声卡播放 | 待定 | 独立采集节点与 dummy 测试通过，待实机验证 |
 | `dozer_camera_gmsl` | 驱动 | 三路 V4L2 采集、降采样与时间戳 | 配置的 `/dev/videoN` | `/camera/<name>/image_small` | 待定 | 节点已实现，待实机取帧验证 |
 | `dozer_radar_sr73f` | 驱动 | SR73F 驱动 + 配置工具 `sr73f_config`，can0，SensorID 0-3 | can0 | `/radar/<name>/objects`、`/radar/<name>/points`、`/radar/<name>/status` | 待定 | 已实现，待硬件验证 |
 | `dozer_perception` | 感知 | 检测/感知算法 | `/camera/<name>/image_small` | `/perception/<name>/detections` | 待定 | 已实现前左/前右检测 |
@@ -119,6 +122,35 @@ dozer_xxx/
 | `dozer_tools` | 系统 | 模拟数据、录包 | — | — | 集成负责人 | 可用 |
 
 负责人确定后填写到表中和各包的 `package.xml`（`<maintainer>`）中。
+
+### 3.1 一键启动
+
+在工作空间根目录执行：
+
+```bash
+./start_all.sh
+```
+
+脚本先使用 colcon 构建所需包，再通过同一个 ROS launch 启动六路相机、SR73F 雷达、
+音频采集、前左/前右 YOLO 检测、雷达视觉融合、静态 TF 和远程驾驶 RTC edge。
+有图形桌面时同时打开检测预览，无桌面环境时自动关闭预览。按 Ctrl+C 统一停止。
+
+```bash
+./start_all.sh --no-build          # 已构建过时跳过编译
+./start_all.sh --headless          # 不打开预览窗口
+./start_all.sh --dry-run           # 仅打印构建和启动命令，不访问硬件
+```
+
+首次使用前安装 ROS 2 Humble 和工程依赖，并通过 `./setup_gpu_inference.sh` 准备
+`.venv-gpu` 与 YOLO 模型。相机、CAN 和音频设备需已就绪且当前用户有访问权限；
+脚本不会自动安装依赖、配置 CAN 接口或修改车辆安全设置。参数继续集中在
+`src/system/dozer_bringup/config/`，RTC 使用其中 `rtc_edge/rtc.cfg` 与 `rtc_edge/edge.cfg`。
+不要同时运行旧的 `start_detection_viewer.sh`，以免重复占用相机。
+`dozer_vehicle` 与旧 `dozer_rtc_bridge` 尚为骨架，不在启动范围内；
+RTC 的车辆控制仍受现有 debug 模式约束，不代表已接入真实车辆执行。
+
+总 launch 新增 `use_rtc_edge:=true`，默认关闭；可通过 `rtc_config:=...` 和
+`edge_config:=...` 覆盖 RTC 配置路径。独立启动相机或音频的原有命令保持不变。
 
 ---
 

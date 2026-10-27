@@ -188,20 +188,6 @@ float ReadPositiveFloat(const nlohmann::json& object,
   return static_cast<float>(parsed);
 }
 
-int ReadAudioSampleRate(const nlohmann::json& object,
-                        const char* key,
-                        const std::string& object_path) {
-  const int sample_rate =
-      ReadInteger(object, key, object_path, 8000, 48000);
-  if (sample_rate != 8000 && sample_rate != 16000 && sample_rate != 32000 &&
-      sample_rate != 44100 && sample_rate != 48000) {
-    throw std::runtime_error(
-        std::string("Config field is not a supported audio sample rate: ") +
-        MakeConfigPath(object_path, key));
-  }
-  return sample_rate;
-}
-
 nlohmann::json ReadConfigFile(const std::string& config_path) {
   std::ifstream input(config_path);
   if (!input.is_open()) {
@@ -308,14 +294,15 @@ EdgeOptions LoadEdgeOptions(const std::string& config_path) {
         ReadBoolean(audio, "input_enabled", "edge.audio");
     options.audio.output_enabled =
         ReadBoolean(audio, "output_enabled", "edge.audio");
-    options.audio.input_device =
-        ReadString(audio, "input_device", "edge.audio");
+    if (audio.contains("input_topic")) {
+      options.audio.input_topic = ReadString(audio, "input_topic", "edge.audio");
+    }
+    if (options.audio.input_topic.empty() || options.audio.input_topic.front() != '/' ||
+      options.audio.input_topic.find("/dev/") == 0) {
+      throw std::runtime_error("Invalid config field: edge.audio.input_topic");
+    }
     options.audio.output_device =
         ReadString(audio, "output_device", "edge.audio");
-    options.audio.sample_rate =
-        ReadAudioSampleRate(audio, "sample_rate", "edge.audio");
-    options.audio.channels =
-        ReadInteger(audio, "channels", "edge.audio", 1, 2);
   }
 
   options.camera.capture.left_device =
