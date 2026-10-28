@@ -136,6 +136,8 @@ dozer_xxx/
 有图形桌面时同时打开检测预览，无桌面环境时自动关闭预览。按 Ctrl+C 统一停止。
 
 ```bash
+./start_all.sh --keep              # 保留已运行模块，启动缺失模块（默认）
+./start_all.sh --restart           # 重启当前工作空间中已运行的模块
 ./start_all.sh --no-build          # 已构建过时跳过编译
 ./start_all.sh --headless          # 不打开预览窗口
 ./start_all.sh --dry-run           # 仅打印构建和启动命令，不访问硬件
@@ -145,12 +147,21 @@ dozer_xxx/
 `.venv-gpu` 与 YOLO 模型。相机、CAN 和音频设备需已就绪且当前用户有访问权限；
 脚本不会自动安装依赖、配置 CAN 接口或修改车辆安全设置。参数继续集中在
 `src/system/dozer_bringup/config/`，RTC 使用其中 `rtc_edge/rtc.cfg` 与 `rtc_edge/edge.cfg`。
-不要同时运行旧的 `start_detection_viewer.sh`，以免重复占用相机。
+`--keep` 和 `--restart` 无需模块名、不可同时使用，可与 `--no-build`、`--headless` 组合。
+脚本按当前用户和本工作空间安装路径识别模块进程；静态 TF 需由本工作空间的
+`dozer_bringup` launch 启动。保留已有进程时，Ctrl+C 只停止本次新启动的模块，
+原有进程仍由原启动终端管理；进程存在不代表话题、硬件或网络健康，TF 完整性需单独检查。
+六路相机或两路检测只有部分进程存活时，保留模式会报错，使用 `--restart` 统一恢复。
+重启模式先发送 SIGINT 并等待退出；15 秒内未退出或被外部管理器重新拉起时，
+脚本报错退出，不强制杀进程或启动重复实例。`--headless` 不新开预览；
+保留模式不关闭旧预览，重启模式会停止旧预览。
+不要并行启动多个启动脚本，或同时使用其他工作空间的相机采集程序，以免重复占用设备。
 `dozer_vehicle` 与旧 `dozer_rtc_bridge` 尚为骨架，不在启动范围内；
 RTC 的车辆控制仍受现有 debug 模式约束，不代表已接入真实车辆执行。
 
-总 launch 新增 `use_rtc_edge:=true`，默认关闭；可通过 `rtc_config:=...` 和
-`edge_config:=...` 覆盖 RTC 配置路径。独立启动相机或音频的原有命令保持不变。
+总 launch 新增 `use_rtc_edge:=true`，默认关闭；可通过 `rtc_config:=...` 覆盖 RTC 配置路径。
+RTC 仅接受 `--config`，运行参数由 `rtc.cfg` 的 `edge` 段或其 `config` 引用文件加载，
+不支持 `--edge-config`。独立启动相机或音频的原有命令保持不变。
 
 ---
 

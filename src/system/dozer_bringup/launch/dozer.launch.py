@@ -36,17 +36,18 @@ def generate_launch_description():
                                      description='启动远程驾驶 RTC edge'),
           DeclareLaunchArgument('rtc_config', default_value=os.path.join(
                bringup, 'config', 'rtc_edge', 'rtc.cfg')),
-          DeclareLaunchArgument('edge_config', default_value=os.path.join(
-               bringup, 'config', 'rtc_edge', 'edge.cfg')),
         DeclareLaunchArgument('use_perception', default_value='false',
                               description='启动 YOLO 图像检测'),
         DeclareLaunchArgument('use_fusion', default_value='false',
                               description='启动雷达相机融合'),
         DeclareLaunchArgument('use_viewer', default_value='false',
                               description='弹出两路检测画面，并发布带框图像话题'),
+          DeclareLaunchArgument('use_static_tf', default_value='true',
+                                     description='启动静态坐标变换发布节点'),
 
         IncludeLaunchDescription(PythonLaunchDescriptionSource(
-            os.path.join(bringup, 'launch', 'static_tf.launch.py'))),
+               os.path.join(bringup, 'launch', 'static_tf.launch.py')),
+               condition=IfCondition(LaunchConfiguration('use_static_tf'))),
 
         Node(package='dozer_tools', executable='mock_radar_publisher.py',
              name='mock_radar_publisher', condition=IfCondition(use_mock_radar)),
@@ -77,8 +78,7 @@ def generate_launch_description():
              name='detection_viewer', condition=IfCondition(use_viewer)),
         Node(package='dozer_rtc_edge', executable='rtc_edge', name='rtc_edge',
              output='screen',
-             arguments=['--config', LaunchConfiguration('rtc_config'),
-                        '--edge-config', LaunchConfiguration('edge_config')],
+             arguments=['--config', LaunchConfiguration('rtc_config')],
              condition=IfCondition(LaunchConfiguration('use_rtc_edge'))),
 
         # TODO：其它模块实现后依次接入，参数统一从 config/*.yaml 读取。
