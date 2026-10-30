@@ -23,6 +23,7 @@ class RtcSession;
 namespace rtc_edge {
 
 class RosImageSource;
+class DirectImageSource;
 
 struct SingleCameraStreamingModuleOptions {
   rtc_camera::CameraCaptureOptions capture;
@@ -61,6 +62,7 @@ class SingleCameraStreamingModule {
 
   SingleCameraStreamingModuleOptions options_;
   std::unique_ptr<RosImageSource> ros_source_;
+  std::unique_ptr<DirectImageSource> direct_source_;
   bool use_local_yuv_file_ = false;
   std::ifstream local_yuv_file_;
   std::vector<uint8_t> local_i420_frame_;

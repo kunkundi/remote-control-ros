@@ -2,7 +2,7 @@
 
 启动编排与整车配置。
 
-- `launch/dozer.launch.py`：总入口；`use_camera:=true` 启动真实相机驱动，`use_radar:=true` 启动雷达驱动，`use_mock_camera:=true` / `use_mock_radar:=true` 使用模拟数据
+- `launch/dozer.launch.py`：总入口；默认 `image_backend:=shm` 从 edge 获取图像；`use_radar:=true` 启动雷达驱动；真实/模拟 ROS 相机仅在 `image_backend:=ros` 回退模式启用
 - `launch/radar.launch.py`：SR73F 雷达驱动（`replay_file:=` 可回放日志）
 - `launch/static_tf.launch.py`：按 `config/extrinsics.yaml` 发布传感器外参
 - `config/*.yaml`：各模块参数（radar、camera 等），统一在此维护
@@ -14,20 +14,26 @@
 它们只用于验证节点启动、TF 查询和话题流转。相机采集配置使用 `video0` 至
 `video5`，依次对应 `front_left`、`front_right`、`front`、`rear`、`left`、
 `right`；此映射的物理方向仍需核对。雷达使用 SensorID 0。
-真实相机节点独占 V4L2 设备，ROS 版 `dozer_rtc_edge` 订阅图像而不重复采集。
-新增四路仅接入图像采集和 RTC 话题，感知与融合仍保留现有配置；新增相机的
+默认 edge 独占六路 V4L2 设备，每路均可经共享内存送到感知。RTC 设备映射见
+`config/rtc_edge/edge.cfg`；默认不启动 ROS 相机节点，不发布图像话题。
+默认仅启用前双目 YOLO，`perception_cameras` 可选择六路中的任意非空子集；融合和预览仍只覆盖前双目。新增相机的
 内外参须在标定后补充。实车使用前须替换现有联调内外参。
 
-启动六路真实相机采集：
+默认整套启动使用根目录 `./start_all.sh`；从旧 ROS 图像链路迁移需显式 `./start_all.sh --restart`。
+六路 YOLO 可用 `./start_all.sh --restart --perception-cameras front_left,front_right,front,rear,left,right`；也可给 launch 传入 `use_perception:=true perception_cameras:=front_left,front_right,front,rear,left,right`（需同时运行直采 edge）。默认两路不变，六路模型并发性能尚需实机验收。
+仅需直采 RTC 与音频时用 `./start_edge.sh`。保留模式拒绝旧 ROS 相机进程，不会自动抢占设备。
+
+仅在调试回退模式启动六路 ROS 相机（不能同时运行直采 edge）：
 
 ```bash
 source /opt/ros/humble/setup.bash
 source install/setup.bash
-ros2 launch dozer_bringup dozer.launch.py use_camera:=true
+ros2 launch dozer_bringup dozer.launch.py image_backend:=ros use_camera:=true
 ```
 
-每路发布 `/camera/<camera_name>/image_small`，默认尺寸为 640x360，最高 5 Hz。
-使用前确认六个设备均支持 1920x1080 采集且未被其他进程占用。
+每路发布 `/camera/<camera_name>/image_small`，默认尺寸为 640x360，目标 30 FPS。
+使用前确认六个设备均支持 1920x1080、至少 30 FPS 采集且未被其他进程占用。
+修改 `config/camera.yaml` 后需要重启相机节点；默认 `--keep` 会保留旧进程及其参数，不会自动应用新帧率。
 
 使用模拟三雷达和三相机跑通话题链路：
 
@@ -35,22 +41,22 @@ ros2 launch dozer_bringup dozer.launch.py use_camera:=true
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 launch dozer_bringup dozer.launch.py \
-  use_mock_radar:=true use_mock_camera:=true use_perception:=true use_fusion:=true
+  image_backend:=ros use_mock_radar:=true use_mock_camera:=true use_perception:=true use_fusion:=true
 ```
 
 另开终端查看 `/perception/fused_detections`。模拟相机发布纯色图，YOLO 通常
 不会检测到目标，因此雷达目标会以 `class_id=4294967295`（unknown）输出；
-这可验证三路节点与融合输出，但不能验证真实视觉匹配精度。使用真实相机时改为
+这可验证模拟数据发布、默认前双目检测节点与融合输出，但不能验证真实视觉匹配精度。使用真实相机时改为
 `use_camera:=true`，关闭 `use_mock_camera`，并检查实际 `image_small` 分辨率是否为 640x360。
 
 有桌面环境时，可在启动命令中加入 `use_viewer:=true`，弹出两路检测画面。
 当前相机和算法已经运行时，只需另开终端执行
-`ros2 run dozer_perception detection_viewer.py`，无需重复启动驱动。
+`ros2 run dozer_perception detection_viewer.py`，无需重复启动驱动；查看 ROS 回退输入时增加 `--ros-args -p image_backend:=ros`。
 
 在本机桌面终端可直接运行工作空间根目录的
-`./start_detection_viewer.sh`。脚本检查图形会话、模型和 `/dev/video0/1`，
-构建所需包后启动六路相机、`can0` 上的前左毫米波雷达、两路 YOLO、雷达视觉融合
-与带框预览窗口，并弹出前左雷达坐标系的实时俯视图；按 Ctrl+C 退出。
+`./start_detection_viewer.sh`。它检查图形会话后复用 `start_all.sh`，支持 `--keep`/`--restart`，
+启动直采 edge、音频、`can0` 上的前左毫米波雷达、两路 YOLO、雷达视觉融合
+与带框预览窗口，并弹出前左雷达坐标系的实时俯视图；按 Ctrl+C 停止本次新启动的模块。
 首次使用 GPU 推理时，在工作空间根目录运行 `./setup_gpu_inference.sh` 建立
 `.venv-gpu`；依赖仅安装在该环境中，启动脚本会先验证 CUDA 卷积。
 需要先将实际权重放在 `src/perception/dozer_perception/model/best.pt`，

@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -19,7 +20,9 @@ class RosImageSource {
  public:
   explicit RosImageSource(const std::vector<std::string>& topics);
   ~RosImageSource();
-  bool TakeI420(cv::Mat* output);
+  void RequestStop();
+  bool TakeI420(cv::Mat* output,
+                std::chrono::milliseconds timeout = std::chrono::milliseconds(0));
   uint64_t received() const { return received_.load(); }
 
  private:
@@ -29,6 +32,8 @@ class RosImageSource {
   std::vector<rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr> subscriptions_;
   std::vector<sensor_msgs::msg::Image::ConstSharedPtr> latest_;
   std::mutex mutex_;
+  std::condition_variable frame_ready_;
+  std::atomic<bool> stopped_{false};
   std::thread worker_;
   std::atomic<uint64_t> received_{0};
 };

@@ -175,13 +175,14 @@ void TestRepositoryConfig() {
   const rtc_edge_app::EdgeOptions options =
       rtc_edge_app::LoadEdgeOptions("rtc.cfg");
   Check(!options.rtc.room_id.empty(), "load repository room");
-  Check(options.camera.capture.left_device == "/camera/front_left/image_small",
-        "load repository left camera");
-    Check(options.surround_camera.front_device == "/camera/front/image_small" &&
-      options.surround_camera.rear_device == "/camera/rear/image_small" &&
-      options.surround_camera.left_device == "/camera/left/image_small" &&
-      options.surround_camera.right_device == "/camera/right/image_small",
-      "load all surround ROS camera topics");
+    Check(options.camera.capture.left_device == "/dev/video0" &&
+      options.camera.capture.right_device == "/dev/video1",
+      "load repository stereo devices");
+    Check(options.surround_camera.front_device == "/dev/video2" &&
+      options.surround_camera.rear_device == "/dev/video3" &&
+      options.surround_camera.left_device == "/dev/video4" &&
+      options.surround_camera.right_device == "/dev/video5",
+      "load all surround camera devices");
   Check(!options.camera.yolo_enabled, "disable repository edge YOLO");
   Check(options.camera.yolo_max_fps == 15,
         "load repository YOLO max FPS");
@@ -487,9 +488,10 @@ void TestInvalidDogSpeed() {
 int main(int argc, char** argv) {
   if (argc == 2 && std::string(argv[1]) == "--check-default-config") {
     const auto options = rtc_edge_app::ParseEdgeArgs(1, argv);
-    Check(options.camera.capture.left_device == "/camera/front_left/image_small",
+        Check(options.camera.capture.left_device == "/dev/video0" &&
+          options.camera.capture.right_device == "/dev/video1",
           "default config resolves beside executable");
-    Check(options.surround_camera.rear_device == "/camera/rear/image_small",
+        Check(options.surround_camera.rear_device == "/dev/video3",
           "default config resolves referenced edge config");
     return 0;
   }

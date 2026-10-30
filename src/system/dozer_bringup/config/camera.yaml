@@ -1,6 +1,6 @@
 # 六路相机暂按 video0-video5 映射；物理安装方向尚未核对。
-# 每路 1920x1080 以 3 倍降采样发布 640x360 BGR 图像，最高 5 Hz。
-# ROS 版 dozer_rtc_edge 订阅 image_small，不直接占用设备。
+# 每路 1920x1080 以 3 倍降采样发布 640x360 BGR 图像，目标 30 Hz。
+# 仅供 ROS 图像回退模式使用；默认由 edge 直采，不能同时启动这些节点。
 camera_front_left:
   ros__parameters:
     camera_name: front_left
@@ -8,7 +8,7 @@ camera_front_left:
     width: 1920
     height: 1080
     small_image_downscale: 3
-    small_image_max_fps: 5.0
+    small_image_max_fps: 30.0
 camera_front_right:
   ros__parameters:
     camera_name: front_right
@@ -16,7 +16,7 @@ camera_front_right:
     width: 1920
     height: 1080
     small_image_downscale: 3
-    small_image_max_fps: 5.0
+    small_image_max_fps: 30.0
 camera_front:
   ros__parameters:
     camera_name: front
@@ -24,7 +24,7 @@ camera_front:
     width: 1920
     height: 1080
     small_image_downscale: 3
-    small_image_max_fps: 5.0
+    small_image_max_fps: 30.0
 camera_rear:
   ros__parameters:
     camera_name: rear
@@ -32,7 +32,7 @@ camera_rear:
     width: 1920
     height: 1080
     small_image_downscale: 3
-    small_image_max_fps: 5.0
+    small_image_max_fps: 30.0
 camera_left:
   ros__parameters:
     camera_name: left
@@ -40,7 +40,7 @@ camera_left:
     width: 1920
     height: 1080
     small_image_downscale: 3
-    small_image_max_fps: 5.0
+    small_image_max_fps: 30.0
 camera_right:
   ros__parameters:
     camera_name: right
@@ -48,4 +48,4 @@ camera_right:
     width: 1920
     height: 1080
     small_image_downscale: 3
-    small_image_max_fps: 5.0
+    small_image_max_fps: 30.0

@@ -12,25 +12,18 @@
 ## 1. 整体架构
 
 ```text
-┌───────────────────────────── Jetson Orin NX ─────────────────────────────┐
-│                                                                          │
-│  ┌── video_container（同一进程，进程内零拷贝）────────────────┐           │
-│  │ [dozer_camera_gmsl]  8 路 GMSL 采集 → CUDA 转换 → 帧        │           │
-│  │        │ 进程内传帧（TypeAdapter，零拷贝）                  │           │
-│  │        ▼                                                  │           │
-│  │ [dozer_rtc_bridge]   NVENC → WebRTC 视频                   │ ──► 远程驾驶台
-│  │                      检测/雷达/状态 → nanopb → DataChannel │ ◄── (rtc_console)
-│  │                      DataChannel 控制 → /vehicle/*         │           │
-│  └───────────────────────────────────────────────────────────┘           │
-│        │ /camera/<name>/image_small（降采样，跨进程）                     │
-│        ▼                                                                 │
-│  [dozer_perception]   → /perception/<name>/detections                    │
-│  [dozer_radar_sr73f]  can0 (SR73F × 3~4) → /radar/<name>/objects          │
-│  [dozer_fusion]       雷达 + 视觉 → /fusion/objects（后期）                │
-│  [dozer_vehicle]      /vehicle/drive_cmd → 看门狗 → CAN/串口 → 车辆        │
-│                       → /vehicle/state                                    │
-└──────────────────────────────────────────────────────────────────────────┘
+/dev/video0..5 -> dozer_rtc_edge: V4L2 -> CUDA I420 -> 640x360
+                          |-> I420 stereo/grid -> NVENC -> RTC console
+                          |-> per-camera latest-frame shared memory (6 cameras)
+                                       |-> dozer_perception (YOLO)
+                                       |        -> ROS detections
+                                       |-> detection_viewer
+dozer_radar_sr73f -> ROS radar objects -> dozer_fusion -> ROS fused detections
+dozer_audio -> ROS PCM -> dozer_rtc_edge -> RTC console
 ```
+
+当前采用方案二：edge 直采，图像像素经共享内存并行送给独立感知进程，不经过 ROS 图像话题，也不从 RTC 编码视频回解。六路各 640x360、目标 30 FPS，双目 1280x360、环视网格 640x360。转换、缩放和共享快照仍有拷贝，不是零拷贝；实机端到端帧率尚需验收。edge 退出会中断感知输入，普通网络断连或视图切换不关闭采集。
+`dozer_vehicle`、`dozer_rtc_bridge` 仍为后续规划；当前控制保留 edge 内 debug 模式和 300 ms 看门狗，不能视为已接入实车。后文迁移阶段规划不代表这些功能已经完成。
 
 分层：
 
@@ -43,14 +36,14 @@
 | 通信层 `comm/` | 与远程驾驶台的通信 | `dozer_rtc_bridge` |
 | 系统层 `system/` | 启动编排、配置、工具 | `dozer_bringup`、`dozer_tools` |
 
-依赖方向只能自上而下：驱动层不依赖感知/控制/通信层；感知层只通过 topic 使用驱动层数据，不链接驱动代码（相机库被 rtc_bridge 链接是第一阶段的过渡，见第 5.3 节）。
+驱动层不依赖感知/控制/通信层；感知层通过共享内存图像协议或 ROS 消息使用传感器数据，不链接驱动代码。当前相机采集库在 edge 内运行，ROS 相机节点仅保留为调试回退。
 
 设计原则：
 
-1. **视频热路径不走 DDS**：相机与 RTC 网关在同一进程内传帧，零拷贝；只有降采样帧跨进程发布给算法。
-2. **对内 ROS 消息，对外 nanopb 协议**：车端模块之间只用 ROS 消息；车端 ↔ 驾驶台继续使用 rtc-framework 中已有的 nanopb 协议（`client/protocols/`），二者之间只由 `dozer_rtc_bridge` 翻译。
-3. **控制链路独立**：车辆控制在独立进程 `dozer_vehicle` 中，看门狗在车辆侧判定；算法或网关崩溃不影响本地安全停车。
-4. **进程隔离**：除视频容器外，驱动、算法、控制分进程运行，单个模块崩溃不拖垮其它模块。
+1. **图像不走 DDS**：RTC 直接接收进程内 I420，独立算法通过有界共享快照取最新帧；慢消费者不得阻塞采集。
+2. **结果走 ROS，对外沿用 nanopb**：检测、雷达、融合仍用 ROS 消息；检测结果上传适配尚未完成。
+3. **控制独立是后续目标**：真实车辆适配与独立看门狗需审查后实现，当前仅保留 edge 的调试控制。
+4. **感知进程隔离**：算法退出不关闭 edge；edge 退出时消费者拒绝过期帧，预览标明断流。
 
 ---
 
@@ -77,7 +70,7 @@
         ├── comm/
         │   └── dozer_rtc_bridge/   # RTC 网关（由 rtc_edge 改造而来）
         ├── remote_drive/
-        │   └── dozer_rtc_edge/     # 独立边缘端，colcon 构建，订阅 ROS 相机图像
+        │   └── dozer_rtc_edge/     # 边缘端直采、RTC 视频、共享内存图像输出
         └── system/
             ├── dozer_bringup/      # launch、config/*.yaml、传感器外参、systemd
             └── dozer_tools/        # 模拟数据发布器、录包脚本等开发工具
@@ -85,7 +78,7 @@
 
 分类目录只用于组织，colcon 会递归查找包；包名全局唯一，以 `dozer_` 开头。
 
-`dozer_rtc_edge` 是独立边缘端移植包，复用 `dozer_camera_gmsl` 发布的图像，不重复采集设备。
+`dozer_rtc_edge` 默认独占六路设备，复用外部 rtc-framework 采集/CUDA 源码；不要同时启动 ROS 相机驱动。每路输出 `/dev/shm/dozer_camera_<name>`，名称为 front_left、front_right、front、rear、left、right，生产者与消费者需同一用户。默认只为前双目启动 YOLO，其余相机可按需加入。详细协议及复制边界见 edge 文档。
 音频由 `dozer_audio` 的 `audio_capture_node` 独占采集，发布 `/audio/capture`，edge 通过订阅接入 RTC，不再打开麦克风。使用 `ros2 launch dozer_bringup audio.launch.py` 或总启动入口的 `use_audio:=true` 启动；设备参数见 `dozer_bringup/config/audio.yaml`。远端音频播放仍由 edge 调用驱动库。
 运行配置集中在 `dozer_bringup/config/rtc_edge/`，构建、依赖与当前限制见 [src/remote_drive/dozer_rtc_edge/README.md](src/remote_drive/dozer_rtc_edge/README.md)。
 它尚未完成 ROS 检测结果上传与 `/vehicle/*` 翻译，不替代规划中的 `dozer_rtc_bridge`。
@@ -112,9 +105,9 @@ dozer_xxx/
 |---|---|---|---|---|---|---|
 | `dozer_msgs` | 接口 | 接口定义 | — | — | 架构负责人 | 第一版已提交 |
 | `dozer_audio` | 驱动 | PCM 采集节点、SDL3 设备枚举与播放库 | 音频设备、PCM 帧 | `/audio/capture`（100 Hz）、声卡播放 | 待定 | 独立采集节点与 dummy 测试通过，待实机验证 |
-| `dozer_camera_gmsl` | 驱动 | 三路 V4L2 采集、降采样与时间戳 | 配置的 `/dev/videoN` | `/camera/<name>/image_small` | 待定 | 节点已实现，待实机取帧验证 |
+| `dozer_camera_gmsl` | 驱动 | 六路 V4L2 ROS 回退采集、降采样与时间戳 | 配置的 `/dev/videoN` | `/camera/<name>/image_small` | 待定 | 默认不启动；不能与 edge 直采同时占用设备 |
 | `dozer_radar_sr73f` | 驱动 | SR73F 驱动 + 配置工具 `sr73f_config`，can0，SensorID 0-3 | can0 | `/radar/<name>/objects`、`/radar/<name>/points`、`/radar/<name>/status` | 待定 | 已实现，待硬件验证 |
-| `dozer_perception` | 感知 | 检测/感知算法 | `/camera/<name>/image_small` | `/perception/<name>/detections` | 待定 | 已实现前左/前右检测 |
+| `dozer_perception` | 感知 | 检测/感知算法 | edge I420 共享内存（ROS topic 可显式回退） | `/perception/<name>/detections` | 待定 | 可选 1～6 路，默认前双目 |
 | `dozer_fusion` | 感知 | 雷达 + 视觉融合 | 雷达、检测、tf | `/fusion/objects` | 待定 | 后期 |
 | `dozer_vehicle` | 控制 | 驾驶指令看门狗、换档、车辆接口 | `/vehicle/drive_cmd`、`/vehicle/set_gear` | `/vehicle/state` | 待定 | 骨架 |
 | `dozer_rtc_bridge` | 通信 | 视频推流、结果上传、控制下行 | 相机帧、上述 topic、DataChannel | 视频、DataChannel、`/vehicle/*` | RTC 模块负责人 | 骨架 |
@@ -131,8 +124,8 @@ dozer_xxx/
 ./start_all.sh
 ```
 
-脚本先使用 colcon 构建所需包，再通过同一个 ROS launch 启动六路相机、SR73F 雷达、
-音频采集、前左/前右 YOLO 检测、雷达视觉融合、静态 TF 和远程驾驶 RTC edge。
+脚本先使用 colcon 构建所需包，再通过同一个 ROS launch 启动直采六路相机的 RTC edge、SR73F 雷达、
+音频采集、前左/前右共享内存 YOLO 检测、雷达视觉融合和静态 TF，不启动 ROS 相机节点。
 有图形桌面时同时打开检测预览，无桌面环境时自动关闭预览。按 Ctrl+C 统一停止。
 
 ```bash
@@ -143,6 +136,22 @@ dozer_xxx/
 ./start_all.sh --dry-run           # 仅打印构建和启动命令，不访问硬件
 ```
 
+`--perception-cameras` 接受不重复的逗号分隔相机名单，默认 `front_left,front_right`，不适用于 `--edge-only`。六路各自独立读取最新帧，不排队积压；当前仍是每路一个 YOLO 进程/模型，并非共享模型或批推理。六路并发的显存、推理帧率与 RTC 竞争尚需实机压测，不能保证每路 30 FPS 推理。预览与融合仍为现有前双目范围。
+
+从旧 ROS 图像链路切换时执行 `./start_all.sh --restart`；`--keep` 发现旧相机节点或无共享内存输出的旧 edge 会拒绝启动。检查新命令而不停止服务可用 `./start_all.sh --restart --dry-run`。
+
+只需要 RTC edge、六路相机和音频采集时，使用 [start_edge.sh](start_edge.sh)：
+
+```bash
+./start_edge.sh                    # 构建并启动直采 edge 和音频
+./start_edge.sh --restart --no-build # 跳过编译，显式切换或重启
+./start_edge.sh --dry-run          # 仅打印命令，不访问硬件
+```
+
+该脚本不启动雷达、感知、融合、静态 TF 或预览，不要求 `.venv-gpu` 与 YOLO 模型；
+复用总启动脚本的 `--edge-only` 模式，保留和重启操作仅作用于旧 camera、audio、edge，
+不会停止其他已运行模块。不要与其他启动脚本并行执行。
+
 首次使用前安装 ROS 2 Humble 和工程依赖，并通过 `./setup_gpu_inference.sh` 准备
 `.venv-gpu` 与 YOLO 模型。相机、CAN 和音频设备需已就绪且当前用户有访问权限；
 脚本不会自动安装依赖、配置 CAN 接口或修改车辆安全设置。参数继续集中在
@@ -151,7 +160,7 @@ dozer_xxx/
 脚本按当前用户和本工作空间安装路径识别模块进程；静态 TF 需由本工作空间的
 `dozer_bringup` launch 启动。保留已有进程时，Ctrl+C 只停止本次新启动的模块，
 原有进程仍由原启动终端管理；进程存在不代表话题、硬件或网络健康，TF 完整性需单独检查。
-六路相机或两路检测只有部分进程存活时，保留模式会报错，使用 `--restart` 统一恢复。
+检测进程的相机名单、数量与请求不一致时，保留模式会报错，使用 `--restart` 切换或恢复；所选相机缺少共享内存出口的旧 edge 也不能保留。
 重启模式先发送 SIGINT 并等待退出；15 秒内未退出或被外部管理器重新拉起时，
 脚本报错退出，不强制杀进程或启动重复实例。`--headless` 不新开预览；
 保留模式不关闭旧预览，重启模式会停止旧预览。
@@ -161,7 +170,52 @@ RTC 的车辆控制仍受现有 debug 模式约束，不代表已接入真实车
 
 总 launch 新增 `use_rtc_edge:=true`，默认关闭；可通过 `rtc_config:=...` 覆盖 RTC 配置路径。
 RTC 仅接受 `--config`，运行参数由 `rtc.cfg` 的 `edge` 段或其 `config` 引用文件加载，
-不支持 `--edge-config`。独立启动相机或音频的原有命令保持不变。
+不支持 `--edge-config`。默认 `image_backend:=shm`；真实/模拟 ROS 相机回退需 `image_backend:=ros`，且 edge 的设备字段应改为相应 ROS topic，不能与直采同时占用设备。音频启动方式不变。
+
+### 3.2 六路感知配置
+
+当前设备映射如下，物理安装方向仍需现场核对：
+
+| 设备 | 相机名称 | 默认 YOLO |
+|---|---|---|
+| `/dev/video0` | `front_left` | 启用 |
+| `/dev/video1` | `front_right` | 启用 |
+| `/dev/video2` | `front` | 关闭 |
+| `/dev/video3` | `rear` | 关闭 |
+| `/dev/video4` | `left` | 关闭 |
+| `/dev/video5` | `right` | 关闭 |
+
+六路采集和共享快照不依赖是否启动对应 YOLO。每路共享文件为 `/dev/shm/dozer_camera_<name>`，检测输出为 `/perception/<name>/detections`；RTC 环视通道的 `surround_` 前缀不用于感知相机名称。每路模型、阈值和设备参数见 [src/system/dozer_bringup/config/perception.yaml](src/system/dozer_bringup/config/perception.yaml)。
+
+先预检查六路启动命令，不构建、不停止服务、不打开设备：
+
+```bash
+./start_all.sh --restart --dry-run \
+  --perception-cameras front_left,front_right,front,rear,left,right
+```
+
+确认可以中断当前服务后，再执行实际启动；`--restart` 会停止并重新启动脚本管理的相关模块：
+
+```bash
+./start_all.sh --restart \
+  --perception-cameras front_left,front_right,front,rear,left,right
+```
+
+相机名单不能包含空项、空格、重复项或未知名称。可将名单改为 `rear` 等非空子集，仅改变 YOLO 输入选择，不关闭其他相机采集，也不改变雷达、融合或预览的启动范围。直接使用 launch 时传入 `use_perception:=true perception_cameras:=...`，并确保同一用户的直采 edge 已运行。
+
+### 3.3 无硬件回归
+
+启用 `BUILD_TESTING=ON` 并完成构建后，在工作空间根目录运行：
+
+```bash
+source install/setup.bash
+ROS_DOMAIN_ID=182 ROS_LOCALHOST_ONLY=1 \
+  DOZER_SHM_TEST_WRITER="$PWD/build/dozer_rtc_edge/shared_camera_frame_tests" \
+  colcon test --packages-select dozer_rtc_edge dozer_perception dozer_bringup \
+  --return-code-on-test-failure
+```
+
+当前 16 项 CTest 覆盖图像接入、共享内存隔离与过期处理、跨语言消费，以及相机名单和启动保护；其中感知与 bringup 测试分别包含 6 项、8 项 Python 用例。这些测试不打开真实相机、不重启运行服务，也不代表六路 GPU 推理、RTC 接收帧率或实车融合精度已经验收。
 
 ---
 
@@ -172,7 +226,7 @@ RTC 仅接受 `--config`，运行参数由 `rtc.cfg` 的 `edge` 段或其 `confi
 | Topic | 类型 | 发布者 | QoS | 频率 |
 |---|---|---|---|---|
 | `/camera/<name>/image_raw` | `sensor_msgs/Image` | dozer_camera_gmsl | SensorData | 采集帧率；仅进程内或调试使用（第二阶段） |
-| `/camera/<name>/image_small` | `sensor_msgs/Image` | dozer_camera_gmsl | SensorData | ≤ 15 Hz |
+| `/camera/<name>/image_small` | `sensor_msgs/Image` | dozer_camera_gmsl（仅显式回退，默认无图像 topic） | SensorData | 目标 30 Hz |
 | `/radar/<name>/objects` | `dozer_msgs/RadarObjectArray` | dozer_radar_sr73f | SensorData | 30 Hz |
 | `/radar/<name>/points` | `sensor_msgs/PointCloud2` | dozer_radar_sr73f | SensorData | 30 Hz，仅有订阅者时发布（可视化用） |
 | `/radar/<name>/status` | `dozer_msgs/RadarStatus` | dozer_radar_sr73f | Reliable | 1 Hz |
@@ -188,7 +242,7 @@ RTC 仅接受 `--config`，运行参数由 `rtc.cfg` 的 `edge` 段或其 `confi
 ### 4.2 时间戳
 
 - `header.stamp` 填**数据采集时刻**，不是发布时刻。
-  - 相机：帧采集时间戳；
+  - 相机：当前为软件出队时间映射到系统时钟，不是硬件曝光时间；
   - 雷达：收到该周期 `0x60A` 列表头的时刻；
   - 检测结果：必须等于输入图像帧的时间戳（rtc_bridge 靠它把检测框与视频帧对齐）。
 - 统一使用系统时钟（`rclcpp::Clock` 默认 ROS time = system time），不要自行使用 `steady_clock` 填 header。

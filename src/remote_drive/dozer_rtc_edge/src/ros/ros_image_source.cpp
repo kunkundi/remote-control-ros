@@ -49,34 +49,56 @@ RosImageSource::RosImageSource(const std::vector<std::string>& topics) {
     subscriptions_.push_back(node_->create_subscription<sensor_msgs::msg::Image>(
         topics[index], rclcpp::SensorDataQoS().keep_last(1),
         [this, index](sensor_msgs::msg::Image::ConstSharedPtr image) {
-          std::lock_guard<std::mutex> lock(mutex_);
-          latest_[index] = std::move(image);
-          ++received_;
+          {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (stopped_) { return; }
+            latest_[index] = std::move(image);
+            ++received_;
+          }
+          frame_ready_.notify_one();
         }));
   }
   executor_->add_node(node_);
-  worker_ = std::thread([this] { executor_->spin(); });
+  worker_ = std::thread([this] {
+    while (!stopped_.load() && context_->is_valid()) {
+      executor_->spin_once(std::chrono::milliseconds(100));
+    }
+  });
 }
 
 RosImageSource::~RosImageSource() {
-  executor_->cancel();
+  RequestStop();
   if (worker_.joinable()) { worker_.join(); }
   executor_->remove_node(node_);
 }
 
-bool RosImageSource::TakeI420(cv::Mat* output) {
-  std::vector<sensor_msgs::msg::Image::ConstSharedPtr> frames;
+void RosImageSource::RequestStop() {
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    for (const auto& image : latest_) {
-      if (!image) { return false; }
-    }
-    if (latest_.size() == 2) {
-      const int64_t left = rclcpp::Time(latest_[0]->header.stamp).nanoseconds();
-      const int64_t right = rclcpp::Time(latest_[1]->header.stamp).nanoseconds();
-      if (left - right > 30000000) { latest_[1].reset(); return false; }
-      if (right - left > 30000000) { latest_[0].reset(); return false; }
-    }
+    stopped_ = true;
+  }
+  frame_ready_.notify_all();
+  executor_->cancel();
+}
+
+bool RosImageSource::TakeI420(cv::Mat* output, std::chrono::milliseconds timeout) {
+  std::vector<sensor_msgs::msg::Image::ConstSharedPtr> frames;
+  {
+    std::unique_lock<std::mutex> lock(mutex_);
+    const auto ready = [this] {
+      if (stopped_) { return true; }
+      for (const auto& image : latest_) {
+        if (!image) { return false; }
+      }
+      if (latest_.size() == 2) {
+        const int64_t left = rclcpp::Time(latest_[0]->header.stamp).nanoseconds();
+        const int64_t right = rclcpp::Time(latest_[1]->header.stamp).nanoseconds();
+        if (left - right > 30000000) { latest_[1].reset(); return false; }
+        if (right - left > 30000000) { latest_[0].reset(); return false; }
+      }
+      return true;
+    };
+    if (!frame_ready_.wait_for(lock, timeout, ready) || stopped_) { return false; }
     frames = latest_;
     for (auto& image : latest_) { image.reset(); }
   }

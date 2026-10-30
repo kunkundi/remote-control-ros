@@ -12,7 +12,9 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
+from std_msgs.msg import Header
 from dozer_msgs.msg import Detection2DArray, FusedDetectionArray, RadarObjectArray
+from camera_shm import CameraShmReader
 
 
 UNKNOWN_CLASS_ID = 4294967295
@@ -117,14 +119,18 @@ class DetectionViewer(Node):
     def __init__(self):
         super().__init__('detection_viewer')
         self.declare_parameter('show_window', True)
+        self.declare_parameter('image_backend', 'shm')
+        self.declare_parameter('shm_prefix', 'dozer_camera_')
+        self.declare_parameter('publish_annotated', False)
         self.declare_parameter('window_name', 'Dozer detections')
         self.declare_parameter('radar_window_name', 'Dozer radar front_left')
         self.show_window = bool(self.get_parameter('show_window').value)
         if self.show_window and not (os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')):
-            self.get_logger().warn('No graphical display; publishing annotated images without a window')
+            self.get_logger().warn('No graphical display; preview window disabled')
             self.show_window = False
         self.frames = {'front_left': deque(maxlen=50), 'front_right': deque(maxlen=50)}
         self.rendered = {}
+        self.rendered_stamp = {}
         self.fused = None
         self.fused_by_stamp = OrderedDict()
         self.latest_detections = {}
@@ -132,21 +138,33 @@ class DetectionViewer(Node):
         self.radar_received_at = None
         self.input_subscriptions = []
         self.image_publishers = {}
+        self.frame_readers = {}
+        self.frame_received_at = {}
+        backend = self.get_parameter('image_backend').value
+        if backend not in ('shm', 'ros'):
+            raise ValueError('image_backend must be shm or ros')
         for name, detections_topic in (
                 ('front_left', '/perception/front_left/detections'),
                 ('front_right', '/perception/front_right/detections')):
-            self.input_subscriptions.append(self.create_subscription(
-                Image, f'/camera/{name}/image_small',
-                lambda msg, key=name: self.on_image(key, msg), qos_profile_sensor_data))
+            if backend == 'shm':
+                self.frame_readers[name] = CameraShmReader(
+                    self.get_parameter('shm_prefix').value + name)
+            else:
+                self.input_subscriptions.append(self.create_subscription(
+                    Image, f'/camera/{name}/image_small',
+                    lambda msg, key=name: self.on_image(key, msg), qos_profile_sensor_data))
             self.input_subscriptions.append(self.create_subscription(
                 Detection2DArray, detections_topic,
                 lambda msg, key=name: self.on_detections(key, msg), 10))
-            self.image_publishers[name] = self.create_publisher(
-                Image, f'/perception/{name}/annotated_image', qos_profile_sensor_data)
+            if self.get_parameter('publish_annotated').value:
+                self.image_publishers[name] = self.create_publisher(
+                    Image, f'/perception/{name}/annotated_image', qos_profile_sensor_data)
         self.input_subscriptions.append(self.create_subscription(
             FusedDetectionArray, '/perception/fused_detections', self.on_fused, 10))
         self.input_subscriptions.append(self.create_subscription(
             RadarObjectArray, '/radar/front_left/objects', self.on_radar, qos_profile_sensor_data))
+        if self.frame_readers:
+            self.frame_timer = self.create_timer(1.0 / 60.0, self.read_shared_frames)
         if self.show_window:
             cv2.namedWindow(self.get_parameter('window_name').value, cv2.WINDOW_NORMAL)
             cv2.resizeWindow(self.get_parameter('window_name').value, 1280, 360)
@@ -155,7 +173,32 @@ class DetectionViewer(Node):
             self.timer = self.create_timer(0.1, self.show)
 
     def on_image(self, name, msg):
-        self.frames[name].append(msg)
+        try:
+            self.cache_frame(name, msg.header, to_bgr(msg))
+        except ValueError as exc:
+            self.get_logger().warn(str(exc), throttle_duration_sec=5.0)
+
+    def cache_frame(self, name, header, image):
+        self.frames[name].append((header, image))
+        self.frame_received_at[name] = time.monotonic()
+        detection = self.latest_detections.get(name)
+        if detection is not None and stamp_ns(detection.header.stamp) == stamp_ns(header.stamp):
+            self.on_detections(name, detection)
+
+    def read_shared_frames(self):
+        for name, reader in self.frame_readers.items():
+            try:
+                frame = reader.read()
+                if frame is None:
+                    continue
+                if frame.frame_id != name:
+                    raise ValueError('Shared camera source ID mismatch')
+                header = Header()
+                header.stamp.sec, header.stamp.nanosec = divmod(frame.timestamp_ns, 1_000_000_000)
+                header.frame_id = frame.frame_id
+                self.cache_frame(name, header, frame.image)
+            except (OSError, ValueError) as exc:
+                self.get_logger().warn(str(exc), throttle_duration_sec=5.0)
 
     def on_fused(self, msg):
         self.fused = msg
@@ -174,16 +217,12 @@ class DetectionViewer(Node):
     def on_detections(self, name, msg):
         self.latest_detections[name] = msg
         frame = next((image for image in reversed(self.frames[name])
-                      if stamp_ns(image.header.stamp) == stamp_ns(msg.header.stamp)), None)
+                      if stamp_ns(image[0].stamp) == stamp_ns(msg.header.stamp)), None)
         if frame is None:
             self.get_logger().warn(f'No matching image for {name} detection stamp',
                                    throttle_duration_sec=5.0)
             return
-        try:
-            image = to_bgr(frame)
-        except ValueError as exc:
-            self.get_logger().warn(str(exc), throttle_duration_sec=5.0)
-            return
+        image = frame[1].copy()
         fused = self.fused_by_stamp.get(stamp_ns(msg.header.stamp))
         height, width = image.shape[:2]
         unknown_count = sum(d.class_id == UNKNOWN_CLASS_ID for d in fused.detections) if fused else 0
@@ -203,21 +242,33 @@ class DetectionViewer(Node):
                 label += f'  3D ({match.position_x:.1f},{match.position_y:.1f},{match.position_z:.1f})m'
             cv2.putText(image, label, (x1, max(40, y1 - 7)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 2)
-        output = Image()
-        output.header = frame.header
-        output.height, output.width = height, width
-        output.encoding = 'bgr8'
-        output.is_bigendian = 0
-        output.step = width * 3
-        output.data = image.tobytes()
-        self.image_publishers[name].publish(output)
+        if name in self.image_publishers:
+            output = Image()
+            output.header = frame[0]
+            output.height, output.width = height, width
+            output.encoding = 'bgr8'
+            output.is_bigendian = 0
+            output.step = width * 3
+            output.data = image.tobytes()
+            self.image_publishers[name].publish(output)
         self.rendered[name] = image
+        self.rendered_stamp[name] = stamp_ns(msg.header.stamp) / 1_000_000_000
 
     def show(self):
-        if self.rendered:
-            panels = [self.rendered.get(name, np.zeros((360, 640, 3), np.uint8))
-                      for name in ('front_left', 'front_right')]
-            cv2.imshow(self.get_parameter('window_name').value, np.hstack(panels))
+        panels = []
+        for name in ('front_left', 'front_right'):
+            if time.monotonic() - self.frame_received_at.get(name, 0) > 0.5:
+                panel = np.zeros((360, 640, 3), np.uint8)
+                cv2.putText(panel, name + ': CAMERA STALE', (20, 180),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2)
+            elif time.time() - self.rendered_stamp.get(name, 0) > 0.5:
+                panel = self.frames[name][-1][1].copy()
+                cv2.putText(panel, name + ': DETECTIONS STALE', (12, 24),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
+            else:
+                panel = self.rendered[name]
+            panels.append(cv2.resize(panel, (640, 360)))
+        cv2.imshow(self.get_parameter('window_name').value, np.hstack(panels))
         fresh = self.radar_received_at is not None and time.monotonic() - self.radar_received_at < 1.0
         radar_image = draw_radar(self.radar if fresh else None)
         if not fresh:

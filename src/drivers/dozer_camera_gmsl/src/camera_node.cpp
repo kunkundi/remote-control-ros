@@ -17,6 +17,8 @@
 #include <thread>
 #include <vector>
 
+#include "dozer_camera_gmsl/frame_rate_limiter.hpp"
+#include "dozer_camera_gmsl/yuv422_downsampler.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/image.hpp"
 
@@ -36,11 +38,6 @@ std::runtime_error DeviceError(const std::string & operation, const std::string 
   return std::runtime_error(operation + " " + device + ": " + std::strerror(errno));
 }
 
-uint8_t ClampColor(int value)
-{
-  return static_cast<uint8_t>(std::clamp(value, 0, 255));
-}
-
 struct MappedBuffer
 {
   void * data = nullptr;
@@ -58,14 +55,14 @@ public:
     const int width = declare_parameter<int>("width", 1280);
     const int height = declare_parameter<int>("height", 720);
     const int downscale = declare_parameter<int>("small_image_downscale", 2);
-    const double max_fps = declare_parameter<double>("small_image_max_fps", 15.0);
+    const double max_fps = declare_parameter<double>("small_image_max_fps", 30.0);
     if (name_.empty() || width <= 0 || height <= 0 || downscale <= 0 || max_fps <= 0) {
       throw std::invalid_argument("camera_name, width, height, downscale and max_fps must be positive");
     }
     requested_width_ = static_cast<uint32_t>(width);
     requested_height_ = static_cast<uint32_t>(height);
     downscale_ = static_cast<uint32_t>(downscale);
-    min_period_ = std::chrono::duration<double>(1.0 / max_fps);
+    frame_rate_limiter_ = dozer_camera_gmsl::FrameRateLimiter(max_fps);
     publisher_ = create_publisher<sensor_msgs::msg::Image>(
       "/camera/" + name_ + "/image_small", rclcpp::SensorDataQoS());
     OpenCamera();
@@ -212,31 +209,14 @@ private:
     image.is_bigendian = false;
     image.step = width * 3;
     image.data.resize(static_cast<size_t>(image.step) * height);
-    const bool yuyv = format_.fmt.pix.pixelformat == V4L2_PIX_FMT_YUYV;
-    for (uint32_t y = 0; y < height; ++y) {
-      const uint32_t source_y = y * downscale_;
-      const uint8_t * row = source + static_cast<size_t>(source_y) * stride_;
-      for (uint32_t x = 0; x < width; ++x) {
-        const uint32_t source_x = x * downscale_;
-        const uint8_t * pair = row + static_cast<size_t>(source_x / 2) * 4;
-        const int luma = yuyv ? pair[(source_x & 1) ? 2 : 0] :
-          pair[(source_x & 1) ? 3 : 1];
-        const int u = (yuyv ? pair[1] : pair[0]) - 128;
-        const int v = (yuyv ? pair[3] : pair[2]) - 128;
-        const int c = std::max(0, luma - 16);
-        const size_t index = (static_cast<size_t>(y) * width + x) * 3;
-        image.data[index] = ClampColor((298 * c + 516 * u + 128) >> 8);
-        image.data[index + 1] = ClampColor((298 * c - 100 * u - 208 * v + 128) >> 8);
-        image.data[index + 2] = ClampColor((298 * c + 409 * v + 128) >> 8);
-      }
-    }
+    converter_.Convert(source, bytes_used, requested_width_, requested_height_, stride_,
+      downscale_, format_.fmt.pix.pixelformat == V4L2_PIX_FMT_YUYV,
+      image.data.data(), image.data.size());
     return image;
   }
 
   void CaptureLoop()
   {
-    auto last_publish = std::chrono::steady_clock::time_point{};
-    bool have_published = false;
     while (running_ && rclcpp::ok()) {
       pollfd descriptor{fd_, POLLIN, 0};
       const int ready = poll(&descriptor, 1, 1000);
@@ -265,13 +245,11 @@ private:
       if (buffer.flags & V4L2_BUF_FLAG_ERROR) {
         RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
           "%s: V4L2 returned an error frame from %s", name_.c_str(), device_.c_str());
-      } else if (!have_published || std::chrono::steady_clock::now() - last_publish >= min_period_) {
+      } else if (frame_rate_limiter_.ShouldPublish(std::chrono::steady_clock::now())) {
         try {
           auto image = MakeSmallImage(
             static_cast<const uint8_t *>(buffers_[buffer.index].data), buffer.bytesused);
           publisher_->publish(std::move(image));
-          last_publish = std::chrono::steady_clock::now();
-          have_published = true;
         } catch (const std::exception & error) {
           RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
             "%s: %s", name_.c_str(), error.what());
@@ -290,7 +268,8 @@ private:
   uint32_t requested_height_ = 0;
   uint32_t downscale_ = 2;
   uint32_t stride_ = 0;
-  std::chrono::duration<double> min_period_{0.0};
+  dozer_camera_gmsl::FrameRateLimiter frame_rate_limiter_{30.0};
+  dozer_camera_gmsl::Yuv422Downsampler converter_;
   v4l2_format format_{};
   int fd_ = -1;
   bool streaming_ = false;

@@ -65,13 +65,28 @@ add_library(edge_support STATIC
 target_link_libraries(edge_support edge_dependencies)
 ament_target_dependencies(edge_support rclcpp)
 
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+  set(CMAKE_CUDA_ARCHITECTURES 87 CACHE STRING "CUDA architectures (Jetson Orin by default)")
+endif()
+enable_language(CUDA)
+find_package(CUDAToolkit REQUIRED)
+set(camera_source "${RTC_FRAMEWORK_ROOT}/client/modules/camera/src")
+add_library(edge_direct_camera STATIC
+  "${camera_source}/v4l2_camera.cpp"
+  "${camera_source}/single/async_image_source.cpp"
+  "${camera_source}/single/frame_converter.cpp"
+  "${camera_source}/single/uyvy_to_i420_cuda.cu"
+  src/ros/direct_image_source.cpp)
+target_link_libraries(edge_direct_camera PUBLIC edge_support CUDA::cudart "${LIBYUV_LIBRARY}")
+target_compile_options(edge_direct_camera PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
+
 add_executable(rtc_edge
   ${app}/main.cpp ${app}/edge_options.cpp ${app}/edge_application.cpp ${app}/video_send_planner.cpp
   src/ros/ros_context.cpp
   src/ros/ros_audio_source.cpp
   src/ros/ros_image_source.cpp
   src/ros/ros_camera_streaming.cpp)
-target_link_libraries(rtc_edge edge_support "${LIBYUV_LIBRARY}")
+target_link_libraries(rtc_edge edge_direct_camera)
 ament_target_dependencies(rtc_edge rclcpp sensor_msgs dozer_msgs)
 get_filename_component(vtsrtc_library_dir "${VTSRTC_LIBRARY}" DIRECTORY)
 set_target_properties(rtc_edge PROPERTIES INSTALL_RPATH "${vtsrtc_library_dir}")
@@ -84,6 +99,13 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/rtc.cfg" "${CMAKE_CURRENT_BINARY_DIR}
   DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)
+  add_executable(direct_image_source_tests test/ros/direct_image_source_tests.cpp)
+  target_link_libraries(direct_image_source_tests PRIVATE edge_direct_camera)
+  add_test(NAME direct_image_source_tests COMMAND direct_image_source_tests)
+  add_executable(shared_camera_frame_tests test/ros/shared_camera_frame_tests.cpp)
+  target_include_directories(shared_camera_frame_tests PRIVATE include)
+  add_test(NAME shared_camera_frame_tests COMMAND shared_camera_frame_tests)
+  set_tests_properties(shared_camera_frame_tests PROPERTIES TIMEOUT 10)
   function(edge_test name)
     add_executable(${name} ${ARGN})
     target_include_directories(${name} PRIVATE "${app}")
@@ -107,9 +129,9 @@ if(BUILD_TESTING)
   edge_test(rtc_vehicle_control_module_tests test/vehicle/vehicle_control_module_tests.cpp)
   edge_test(rtc_vision_view_control_protocol_tests test/protocols/vision/view_control_protocol_tests.cpp)
   add_executable(ros_image_source_tests test/ros/ros_image_source_tests.cpp
-    src/ros/ros_image_source.cpp src/ros/ros_context.cpp)
+    src/ros/ros_image_source.cpp src/ros/ros_context.cpp src/ros/ros_camera_streaming.cpp)
   target_include_directories(ros_image_source_tests PRIVATE include ${OpenCV_INCLUDE_DIRS})
-  target_link_libraries(ros_image_source_tests ${OpenCV_LIBS} Threads::Threads)
+  target_link_libraries(ros_image_source_tests edge_direct_camera ${OpenCV_LIBS} Threads::Threads)
   ament_target_dependencies(ros_image_source_tests rclcpp sensor_msgs)
   add_test(NAME ros_image_source_tests COMMAND ros_image_source_tests)
   add_test(NAME ros_image_source_standalone_tests COMMAND ros_image_source_tests --standalone-context)

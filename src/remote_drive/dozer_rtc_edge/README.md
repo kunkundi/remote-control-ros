@@ -39,13 +39,17 @@ dozer_rtc_edge/
 原有 `rtc_audio/audio_device.h` 包含路径与接口保持不变，由驱动包导出的 CMake target 提供。
 构建本包及工作空间内依赖时使用 `colcon build --packages-up-to dozer_rtc_edge`。
 
-## 相机复用
+## 相机直采与共享内存
 
-由 `dozer_camera_gmsl` 独占相机设备，edge 只订阅 ROS `sensor_msgs/Image`，不打开 `/dev/video*`。当前支持偶数尺寸的 `bgr8`/`rgb8` 和带行填充的图像。输入 QoS 为 SensorData、KeepLast(1)，只缓存最新帧。双目尺寸必须一致，时间戳差不得超过 30 ms，旧帧丢弃后等待新帧；左右图横向拼接并转成 I420 后发送。
+默认由 edge 独占 `/dev/video0` 至 `/dev/video5`，依次为前左、前右、前、后、左、右；这是沿用的配置映射，物理方向仍需核对。不要同时启动 `dozer_camera_gmsl` 或其他采集程序。复用外部 `rtc-framework` 的 V4L2 异步采集和单目 CUDA 转换实现，接受 YUYV/UYVY/NV12，采集请求为 1920x1080，转换为 I420 后用 libyuv 缩至每路 640x360。目标为设备的 30 FPS，不补帧，不承诺处理或 console 接收达到 30 FPS。
 
-默认订阅双目 `/camera/front_left/image_small`、`/camera/front_right/image_small`，以及四路环视 `/camera/front/image_small`、`/camera/rear/image_small`、`/camera/left/image_small`、`/camera/right/image_small`。现有相机配置发布这六路话题，每路为 640x360、最高 5 Hz，输出双目为 1280x360；采集节点需要单独启动。此路径经 DDS 和 CPU 图像转换，不是全分辨率零拷贝；不得据此声称达到原直接采集版本的性能。
+采集/转换线程与 RTC 发送线程分离：没有 console、没有选择视图时仍持续采集。双目直接拼接 I420 平面为 1280x360，配对容差 30 ms，旧帧丢弃；环视网格为 640x360。默认视频热路径没有 ROS 图像序列化，也没有 BGR 往返转换；YOLO/预览按需在消费端把 I420 转成 BGR。仍有转换、缩放与共享内存快照拷贝，不是 DMA-BUF 或端到端零拷贝。
 
-`left_device`、`right_device` 及环视 `*_device` 字段填写绝对 ROS topic，不接受设备路径或本地 YUV 文件。空环视字段禁用该路。相机配置仅保留 topic 字段，已移除无效的宽高、缓冲区、超时、预热和帧等待参数及其解析逻辑。实际尺寸来自 ROS 图像消息；采集尺寸和发布频率由相机驱动配置控制。
+六路各发布一个独立的最新帧快照：`/dev/shm/dozer_camera_<name>`，名称为 front_left、front_right、front、rear、left、right。RTC 环视通道的 `surround_` 前缀不进入共享文件名或相机标识。一路读者持锁不会阻塞其他路。文件权限 0600，消费者与 edge 需同一用户。协议为小端、88 字节头加紧密 I420 负载（640x360 时 345600 字节）；包含版本、帧序号、系统时间纳秒、单调发布时间、尺寸、负载长度和相机标识。时间戳由 V4L2 出队的单调时刻映射到系统时钟，不是硬件曝光时间；检测结果原样保留该时间戳与共享帧序号。
+
+生产者持独占 owner 锁，发布/读取快照用非阻塞文件锁，冲突时跳帧而不阻塞采集。消费者拷贝后立刻释放锁，再转换与推理；60 Hz 轮询不代表 60 FPS，同一序号只消费一次。生产者拒绝处理后超过 200 ms 的输入，消费者拒绝发布后超过 200 ms 的快照。重启以新 inode 原子替换文件，消费者自动跟随；正常退出删除数据文件，保留 `.owner` 锁文件。异常退出留下的数据会因过期被拒绝，不要在 producer 运行时删除 `.owner`。
+
+保留显式 ROS 回退：把 `left_device`、`right_device` 和环视 `*_device` 改成绝对图像 topic，启动感知时指定 `image_backend:=ros`；双目不能混用设备与 topic。ROS 输入支持偶数尺寸 `bgr8`/`rgb8`、行填充和 KeepLast(1)，不发布共享内存。空环视字段禁用该路。本地 YUV 文件不受支持。默认直采路径的分辨率固定在 `DirectImageSource`，`camera.yaml` 只影响 ROS 驱动回退路径。
 
 ## 构建
 
@@ -60,7 +64,9 @@ colcon test-result --verbose
 
 ## 运行
 
-先启动现有 ROS 相机 launch；启用音频输入时，另一个终端启动 `ros2 launch dozer_bringup audio.launch.py`，或在总启动入口使用 `use_audio:=true`。确认 `dozer_bringup/config/rtc_edge/rtc.cfg` 中与上游对齐的信令地址及 ICE 配置适用于当前部署。随后在工作空间根目录执行：
+直采还需要 CUDA Toolkit/nvcc，以及 `RTC_FRAMEWORK_ROOT/client/modules/camera/src` 下的上游采集和 CUDA 源码（直接编译，不复制到本仓库）。默认 CUDA 架构为 Orin 的 87，可用 `-DCMAKE_CUDA_ARCHITECTURES=...` 覆盖；找不到 nvcc 时指定 `-DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc`。
+
+先确认没有其他进程占用相机。启用音频输入时，另一个终端启动 `ros2 launch dozer_bringup audio.launch.py`，或使用根目录 `./start_edge.sh`。确认集中配置的信令地址及 ICE 配置适用于当前部署。单独启动 edge：
 
 ```sh
 source install/setup.bash
@@ -69,7 +75,7 @@ ros2 run dozer_rtc_edge rtc_edge --config "$PWD/src/system/dozer_bringup/config/
 
 也可以直接执行 `ros2 run dozer_rtc_edge rtc_edge`，默认从可执行文件附近读取安装的配置。构建时会将集中配置复制到构建和安装目录，兼容普通安装与 `--symlink-install`；修改源配置后需重新构建 `dozer_rtc_edge`，或使用上述 `--config` 直接指定源配置。
 
-配置集中在 dozer_bringup，不自动启动第二套相机或麦克风采集。RTC 服务、ICE、编码和输出音频设置沿用本机 rtc-framework 部署；保留 ROS 相机话题和车辆调试模式，不引入控制台配置。配置包含 TURN 认证信息，不应公开分发。配置订阅双目和四路环视。相机与音频输入共享进程默认 ROS context；停止单路输入不关闭共享 context。每路输入仍有独立节点和执行器。ROS 命令行参数由 rclcpp 统一处理。
+配置集中在 dozer_bringup，车辆 debug 模式和 300 ms 看门狗保持不变。配置包含 TURN 认证信息，不应公开分发。直采图像不经 ROS；音频及 ROS 图像回退输入共享默认 ROS context，停止单路输入不关闭 context。ROS 命令行参数由 rclcpp 统一处理。从旧版切换时必须显式执行 `./start_all.sh --restart`（整套）或 `./start_edge.sh --restart`（只启用 edge 和音频）；默认 `--keep` 会拒绝保留旧 ROS 相机进程。
 
 ## 音频订阅
 
@@ -95,3 +101,7 @@ ros2 run dozer_rtc_edge rtc_edge --config "$PWD/src/system/dozer_bringup/config/
 相机相关本地 YOLO 路径已从构建移除；启用 edge YOLO 会明确报错。检测由现有 `dozer_perception` 负责，但 ROS 检测结果到 RTC DataChannel 的翻译尚未实现。`dozer_rtc_bridge` 骨架保持不变，避免混淆模块职责。
 
 测试包含上游参数、视频发送规划、控制协议、控制模块及视图协议回归，以及 ROS 图像校验、发布订阅和双目配对。音频订阅测试覆盖 PCM 格式、坏帧拒绝、音频与相机共享 context；`dozer_audio` 使用 SDL dummy 后端覆盖设备层和采集节点发布，不打开真实声卡。构建和无硬件测试不代表已完成实机相机、音频、远程视频或控制链路验证。
+
+直采新增 I420 拼接、共享内存跨进程与 Python 互通测试。可用 `build/dozer_rtc_edge/direct_image_source_tests --cuda` 验证真实 CUDA 内核的合成 YUYV/UYVY/NV12 像素，不打开摄像头。Python 互通测试设置 `DOZER_SHM_TEST_WRITER` 为 `build/dozer_rtc_edge/shared_camera_frame_tests` 的绝对路径。
+
+edge 崩溃、SDK 初始化失败、音频初始化失败或相机致命错误会终止整个 edge，感知因此失去新图像；当前方案不是独立采集守护进程。普通网络断连、未入房或未选视图不会关闭采集。慢消费者只取得最新帧，不保证每帧推理；环视现有四路更新屏障仍保留。实机六路吞吐、编码帧率、console 接收帧率和重连恢复仍需现场验收。

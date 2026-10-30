@@ -1,6 +1,8 @@
-# 三路相机共用工程内的 YOLO 权重。替换 best.pt 时同步修改三个 model_path。
+# 六路相机配置；默认仅启用前双目，perception_cameras 指定实际推理名单。
 yolo_front_left:
   ros__parameters:
+    image_backend: shm
+    shm_name: dozer_camera_front_left
     image_topic: /camera/front_left/image_small
     detections_topic: /perception/front_left/detections
     source_id: front_left
@@ -9,6 +11,8 @@ yolo_front_left:
     device: 0
 yolo_front_right:
   ros__parameters:
+    image_backend: shm
+    shm_name: dozer_camera_front_right
     image_topic: /camera/front_right/image_small
     detections_topic: /perception/front_right/detections
     source_id: front_right
@@ -17,9 +21,41 @@ yolo_front_right:
     device: 0
 yolo_rear:
   ros__parameters:
+    image_backend: shm
+    shm_name: dozer_camera_rear
     image_topic: /camera/rear/image_small
     detections_topic: /perception/rear/detections
     source_id: rear
+    model_path: /home/nvidia/workspace/ros2_ws/src/perception/dozer_perception/model/best.pt
+    confidence: 0.25
+    device: 0
+yolo_front:
+  ros__parameters:
+    image_backend: shm
+    shm_name: dozer_camera_front
+    image_topic: /camera/front/image_small
+    detections_topic: /perception/front/detections
+    source_id: front
+    model_path: /home/nvidia/workspace/ros2_ws/src/perception/dozer_perception/model/best.pt
+    confidence: 0.25
+    device: 0
+yolo_left:
+  ros__parameters:
+    image_backend: shm
+    shm_name: dozer_camera_left
+    image_topic: /camera/left/image_small
+    detections_topic: /perception/left/detections
+    source_id: left
+    model_path: /home/nvidia/workspace/ros2_ws/src/perception/dozer_perception/model/best.pt
+    confidence: 0.25
+    device: 0
+yolo_right:
+  ros__parameters:
+    image_backend: shm
+    shm_name: dozer_camera_right
+    image_topic: /camera/right/image_small
+    detections_topic: /perception/right/detections
+    source_id: right
     model_path: /home/nvidia/workspace/ros2_ws/src/perception/dozer_perception/model/best.pt
     confidence: 0.25
     device: 0

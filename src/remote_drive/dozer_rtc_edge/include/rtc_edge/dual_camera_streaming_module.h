@@ -23,6 +23,7 @@ class RtcSession;
 namespace rtc_edge {
 
 class RosImageSource;
+class DirectImageSource;
 
 struct DualCameraStreamingModuleOptions {
   rtc_camera::dual::AsyncDualCameraImageSourceOptions capture;
@@ -55,6 +56,7 @@ class DualCameraStreamingModule {
  private:
   DualCameraStreamingModuleOptions options_;
   std::unique_ptr<RosImageSource> ros_source_;
+  std::unique_ptr<DirectImageSource> direct_source_;
   bool started_ = false;
   bool first_frame_logged_ = false;
 };
