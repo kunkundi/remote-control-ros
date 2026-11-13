@@ -11,3 +11,4 @@ bags/
 .venv-gpu/
 src/perception/dozer_perception/model/*
 !src/perception/dozer_perception/model/README.md
+!src/perception/dozer_perception/model/best_int8_batch6.engine
