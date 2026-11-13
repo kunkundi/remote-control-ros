@@ -1,4 +1,5 @@
-# One entry per radar object. Positions and velocities are in header.frame_id (base_link).
+# One entry per radar object plus unmatched camera detections.
+# Only entries with has_3d=true have positions and velocities in header.frame_id (base_link).
 # For periodic snapshots, header.stamp is the latest radar acquisition time.
 # For image-triggered snapshots, header.stamp is the image acquisition time;
 # each radar target was selected from a nearby acquisition time.

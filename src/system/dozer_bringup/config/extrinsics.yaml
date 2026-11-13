@@ -1,14 +1,14 @@
 # 传感器外参：相对 base_link（REP-103：x 前、y 左、z 上）。
 # 单位：m / rad。标定完成后更新本文件，并在提交说明中记录标定日期与方法。
-# 雷达和相机均为前左/前右/后向三路。
+# 六路相机与三台雷达；front/rear/left/right 相机位置暂设在前左雷达中心。
 # 联调时暂将 base_link 原点放在 video0/video1 两路前相机光心的中点；
 # 以下位姿仅为联调初值，安装尺寸、朝向均未经实测，不可用于实车定位或安全判断。
 # 联调近似：以 SensorID 0 (radar_front_left) 中心为基准，两路前相机均在右侧 0.02 m。
 # video0 (camera_front_left) 低于雷达中心 0.01 m；
 # video1 (camera_front_right) 高于雷达中心 0.01 m，两相机上下间距 0.02 m。
-# 所有传感器由旧 base_link 原点 [1.1, 0.48, 1.2] m 整体平移到新原点，
-# 保留原有传感器间相对位置；暂按前部三者朝向一致、前后位置相同填写。
-# rear 雷达/相机朝车尾，yaw=pi。optical 子坐标系的固定旋转是坐标约定。
+# front/rear/left/right 四路相机仅为联调临时共址设置，不代表真实安装位置。
+# 相机原有前/后/左/右朝向不变；rear 雷达/相机朝车尾，yaw=pi。
+# optical 子坐标系的固定旋转是坐标约定。
 sensors:
   - frame: radar_front_left
     xyz: [0.0, 0.02, 0.0]
@@ -34,9 +34,30 @@ sensors:
     xyz: [0.0, 0.0, 0.0]
     rpy: [-1.5707963267948966, 0.0, -1.5707963267948966]
   - frame: camera_rear
-    xyz: [-2.2, -0.48, 0.0]
+    xyz: [0.0, 0.02, 0.0]
     rpy: [0.0, 0.0, 3.141592653589793]
   - frame: camera_rear_optical
     parent: camera_rear
+    xyz: [0.0, 0.0, 0.0]
+    rpy: [-1.5707963267948966, 0.0, -1.5707963267948966]
+  - frame: camera_front
+    xyz: [0.0, 0.02, 0.0]
+    rpy: [0.0, 0.0, 0.0]
+  - frame: camera_front_optical
+    parent: camera_front
+    xyz: [0.0, 0.0, 0.0]
+    rpy: [-1.5707963267948966, 0.0, -1.5707963267948966]
+  - frame: camera_left
+    xyz: [0.0, 0.02, 0.0]
+    rpy: [0.0, 0.0, 1.5707963267948966]
+  - frame: camera_left_optical
+    parent: camera_left
+    xyz: [0.0, 0.0, 0.0]
+    rpy: [-1.5707963267948966, 0.0, -1.5707963267948966]
+  - frame: camera_right
+    xyz: [0.0, 0.02, 0.0]
+    rpy: [0.0, 0.0, -1.5707963267948966]
+  - frame: camera_right_optical
+    parent: camera_right
     xyz: [0.0, 0.0, 0.0]
     rpy: [-1.5707963267948966, 0.0, -1.5707963267948966]

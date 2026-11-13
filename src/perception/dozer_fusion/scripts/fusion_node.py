@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Classify a combined radar snapshot using detections from three cameras."""
+"""Classify radar snapshots using configured camera views."""
 
 import math
+import time
 from collections import defaultdict, deque
 
 import rclpy
@@ -68,6 +69,10 @@ class FusionNode(Node):
                                                '/radar/front_right/objects',
                                                '/radar/rear/objects'])
         self.declare_parameter('camera_names', ['front_left', 'front_right', 'rear'])
+        self.declare_parameter('radar_camera_pairs', [
+            'radar_front_left:front_left,front_right,left',
+            'radar_front_right:front_left,front_right,right',
+            'radar_rear:rear,left,right'])
         self.declare_parameter('output_topic', '/perception/fused_detections')
         self.declare_parameter('output_frame', 'base_link')
         self.declare_parameter('max_age_sec', 0.12)
@@ -94,12 +99,23 @@ class FusionNode(Node):
             if camera['width'] <= 0 or camera['height'] <= 0 or camera['fx'] <= 0 or camera['fy'] <= 0:
                 raise ValueError(f'Calibrate image size and intrinsics for {name}')
             self.cameras[name] = camera
+        self.radar_cameras = {}
+        for pair in self.get_parameter('radar_camera_pairs').value:
+            radar_frame, separator, camera_list = pair.partition(':')
+            names = camera_list.split(',')
+            if not separator or not radar_frame or radar_frame in self.radar_cameras or \
+                    not names or len(names) != len(set(names)) or \
+                    any(name not in self.cameras for name in names):
+                raise ValueError(f'Invalid radar_camera_pairs entry: {pair}')
+            self.radar_cameras[radar_frame] = set(names)
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.radar = {}
         # YOLO may finish seconds after image capture. Keep radar frames by acquisition time.
         self.radar_history = defaultdict(lambda: deque(maxlen=900))
         self.detections = {}
+        self.timing_started = time.monotonic()
+        self.timing_samples = {'image': [], 'periodic': []}
         self.publisher = self.create_publisher(
             FusedDetectionArray, self.get_parameter('output_topic').value, 10)
         self.radar_subs = [self.create_subscription(RadarObjectArray, topic, self.on_radar,
@@ -122,8 +138,8 @@ class FusionNode(Node):
                 closest = min(history, key=lambda radar: abs(seconds(radar.header.stamp) - target_time))
                 if abs(seconds(closest.header.stamp) - target_time) <= self.max_age:
                     active.append(closest)
-        if active:
-            self.publish_fused(active, {name: msg}, msg.header.stamp, msg.frame_seq)
+        self.publish_fused(active, {name: msg}, msg.header.stamp, msg.frame_seq,
+                           trigger='image')
 
     def lookup(self, target, source, stamp):
         try:
@@ -142,7 +158,8 @@ class FusionNode(Node):
         stamp = max(active, key=lambda msg: seconds(msg.header.stamp)).header.stamp
         self.publish_fused(active, self.detections, stamp)
 
-    def publish_fused(self, active, detections, stamp, frame_seq=0):
+    def publish_fused(self, active, detections, stamp, frame_seq=0, trigger='periodic'):
+        started = time.perf_counter()
         output = FusedDetectionArray()
         output.header.stamp = stamp
         output.header.frame_id = self.frame
@@ -159,6 +176,7 @@ class FusionNode(Node):
                 fused = FusedDetection()
                 fused.class_id = UNKNOWN_CLASS_ID
                 fused.has_3d = True
+                fused.radar_source_id = radar.header.frame_id.removeprefix('radar_')
                 fused.radar_sensor_id = radar.sensor_id
                 fused.radar_object_id = obj.id
                 fused.position_x, fused.position_y, fused.position_z = point
@@ -168,18 +186,21 @@ class FusionNode(Node):
         for name, camera in self.cameras.items():
             detection_msg = detections.get(name)
             if detection_msg is None or detection_msg.image_width != camera['width'] or \
-                    detection_msg.image_height != camera['height']:
+                    detection_msg.image_height != camera['height'] or \
+                    abs(seconds(stamp) - seconds(detection_msg.header.stamp)) > self.stale:
                 continue
             points = []
             for radar, obj, _ in entries:
-                if abs(seconds(radar.header.stamp) - seconds(detection_msg.header.stamp)) > self.max_age or \
+                if name not in self.radar_cameras.get(radar.header.frame_id, set()) or \
+                        abs(seconds(radar.header.stamp) - seconds(detection_msg.header.stamp)) > self.max_age or \
                         (self.max_match_distance and not 0 <= obj.x <= self.max_match_distance):
                     points.append((math.nan, math.nan, math.nan))
                     continue
                 camera_tf = self.lookup(camera['frame'], radar.header.frame_id, radar.header.stamp)
                 points.append(transform_point(camera_tf, (obj.x, obj.y, 0.0)) if camera_tf
                               else (math.nan, math.nan, math.nan))
-            for index, box in associate(points, detection_msg.detections, camera).items():
+            associations = associate(points, detection_msg.detections, camera)
+            for index, box in associations.items():
                 fused = entries[index][2]
                 if fused.class_id != UNKNOWN_CLASS_ID and fused.score >= box.score:
                     continue
@@ -188,8 +209,32 @@ class FusionNode(Node):
                 fused.x, fused.y, fused.w, fused.h = box.x, box.y, box.w, box.h
                 fused.has_track_id, fused.track_id = box.has_track_id, box.track_id
                 fused.camera_source_id = detection_msg.source_id
-        output.detections = [entry[2] for entry in entries]
+            matched_boxes = {id(box) for box in associations.values()}
+            for box in detection_msg.detections:
+                if id(box) in matched_boxes:
+                    continue
+                camera_only = FusedDetection()
+                camera_only.class_id = box.class_id
+                camera_only.score = box.score
+                camera_only.x, camera_only.y, camera_only.w, camera_only.h = (
+                    box.x, box.y, box.w, box.h)
+                camera_only.has_track_id, camera_only.track_id = box.has_track_id, box.track_id
+                camera_only.camera_source_id = detection_msg.source_id
+                camera_only.has_3d = False
+                output.detections.append(camera_only)
+        output.detections = [entry[2] for entry in entries] + list(output.detections)
         self.publisher.publish(output)
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        self.timing_samples[trigger].append(elapsed_ms)
+        now = time.monotonic()
+        if now - self.timing_started >= 5.0:
+            for kind, samples in self.timing_samples.items():
+                if samples:
+                    self.get_logger().info(
+                        f'Fusion {kind}: {len(samples)} messages/{now - self.timing_started:.1f}s, '
+                        f'avg={sum(samples) / len(samples):.1f} max={max(samples):.1f} ms')
+                    samples.clear()
+            self.timing_started = now
 
 
 def main():

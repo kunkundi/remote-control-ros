@@ -1,4 +1,12 @@
-# 六路相机配置；默认仅启用前双目，perception_cameras 指定实际推理名单。
+# 共享内存模式下任意非空相机名单共用一个固定 batch=6 的 INT8 TensorRT 节点。
+yolo_batch:
+  ros__parameters:
+    model_path: /home/nvidia/workspace/ros2_ws/src/perception/dozer_perception/model/best_int8_batch6.engine
+    confidence: 0.25
+    device: 0
+    shm_prefix: dozer_camera_
+    max_frame_age_sec: 0.2
+    batch_wait_sec: 0.04
 yolo_front_left:
   ros__parameters:
     image_backend: shm
@@ -6,7 +14,7 @@ yolo_front_left:
     image_topic: /camera/front_left/image_small
     detections_topic: /perception/front_left/detections
     source_id: front_left
-    model_path: /home/nvidia/workspace/ros2_ws/src/perception/dozer_perception/model/best.pt
+    model_path: /home/nvidia/workspace/ros2_ws/src/perception/dozer_perception/model/best_int8.engine
     confidence: 0.25
     device: 0
 yolo_front_right:
@@ -16,7 +24,7 @@ yolo_front_right:
     image_topic: /camera/front_right/image_small
     detections_topic: /perception/front_right/detections
     source_id: front_right
-    model_path: /home/nvidia/workspace/ros2_ws/src/perception/dozer_perception/model/best.pt
+    model_path: /home/nvidia/workspace/ros2_ws/src/perception/dozer_perception/model/best_int8.engine
     confidence: 0.25
     device: 0
 yolo_rear:
@@ -26,7 +34,7 @@ yolo_rear:
     image_topic: /camera/rear/image_small
     detections_topic: /perception/rear/detections
     source_id: rear
-    model_path: /home/nvidia/workspace/ros2_ws/src/perception/dozer_perception/model/best.pt
+    model_path: /home/nvidia/workspace/ros2_ws/src/perception/dozer_perception/model/best_int8.engine
     confidence: 0.25
     device: 0
 yolo_front:
@@ -36,7 +44,7 @@ yolo_front:
     image_topic: /camera/front/image_small
     detections_topic: /perception/front/detections
     source_id: front
-    model_path: /home/nvidia/workspace/ros2_ws/src/perception/dozer_perception/model/best.pt
+    model_path: /home/nvidia/workspace/ros2_ws/src/perception/dozer_perception/model/best_int8.engine
     confidence: 0.25
     device: 0
 yolo_left:
@@ -46,7 +54,7 @@ yolo_left:
     image_topic: /camera/left/image_small
     detections_topic: /perception/left/detections
     source_id: left
-    model_path: /home/nvidia/workspace/ros2_ws/src/perception/dozer_perception/model/best.pt
+    model_path: /home/nvidia/workspace/ros2_ws/src/perception/dozer_perception/model/best_int8.engine
     confidence: 0.25
     device: 0
 yolo_right:
@@ -56,6 +64,6 @@ yolo_right:
     image_topic: /camera/right/image_small
     detections_topic: /perception/right/detections
     source_id: right
-    model_path: /home/nvidia/workspace/ros2_ws/src/perception/dozer_perception/model/best.pt
+    model_path: /home/nvidia/workspace/ros2_ws/src/perception/dozer_perception/model/best_int8.engine
     confidence: 0.25
     device: 0

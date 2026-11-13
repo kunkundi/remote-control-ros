@@ -1,5 +1,5 @@
 # dozer_radar_sr73f 参数。
-# 当前实机联调只启用 SensorID 0；其余两台的配置保留供以后接入。
+# 三台雷达均按 SensorID 配置；实机启用前确认 CAN 总线与安装方向。
 radar_sr73f:
   ros__parameters:
     can_interface: can0
@@ -9,7 +9,7 @@ radar_sr73f:
     publish_pointcloud: true # 有订阅者时发布 /radar/<name>/points 供 rviz/foxglove 查看
     offline_timeout_ms: 500
     cycle_timeout_ms: 100
-    radar_names: ["front_left"]
+    radar_names: ["front_left", "front_right", "rear"]
     front_left:
       sensor_id: 0
       frame_id: radar_front_left

@@ -31,8 +31,11 @@ class CameraShmReader:
         self.path = '/dev/shm/' + name
         self.max_age_ns = int(max_age_sec * 1_000_000_000)
         self.last_key = None
+        self.last_timing_ms = (0.0, 0.0)
 
     def read(self):
+        self.last_timing_ms = (0.0, 0.0)
+        started = time.perf_counter()
         try:
             descriptor = os.open(self.path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
         except FileNotFoundError:
@@ -66,10 +69,13 @@ class CameraShmReader:
                 raise ValueError('Truncated shared camera payload')
         finally:
             os.close(descriptor)
+        read_ms = (time.perf_counter() - started) * 1000.0
         camera_name = frame_id.split(b'\0', 1)[0].decode('ascii')
         if not re.fullmatch(r'[A-Za-z0-9_]+', camera_name):
             raise ValueError('Invalid shared camera frame ID')
         planes = np.frombuffer(payload, dtype=np.uint8).reshape(height * 3 // 2, width)
         image = cv2.cvtColor(planes, cv2.COLOR_YUV2BGR_I420)
+        convert_ms = (time.perf_counter() - started) * 1000.0 - read_ms
+        self.last_timing_ms = (read_ms, convert_ms)
         self.last_key = key
         return CameraFrame(sequence, timestamp_ns, camera_name, image)

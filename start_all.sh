@@ -8,11 +8,9 @@ viewer=false
 edge_only=false
 existing=keep
 policy_argument=''
-perception_cameras=front_left,front_right
+perception_cameras=front_left,front_right,front,rear,left,right
 perception_argument=false
-if [[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]]; then
-  viewer=true
-fi
+radar_names=front_left,front_right,rear
 
 usage() {
   if [[ "$edge_only" == true ]]; then
@@ -21,12 +19,14 @@ usage() {
       'Start RTC edge with direct cameras and audio only.'
   else
     printf '%s\n' \
-      'Usage: ./start_all.sh [--keep|--restart] [--no-build] [--headless] [--edge-only] [--dry-run]' \
+      'Usage: ./start_all.sh [--keep|--restart] [--no-build] [--viewer|--headless] [--edge-only] [--dry-run]' \
       'Start direct-camera RTC edge, shared-memory perception, radar, audio, fusion and static TF.' \
-      '  --headless  Disable the preview window (automatic without a display).' \
+      '  --viewer    Open the camera detection and front-left radar windows.' \
+      '  --headless  Disable the preview windows (default).' \
       '  --edge-only Start only direct-camera RTC edge and audio.' \
-      '  --perception-cameras NAMES  Comma-separated YOLO cameras (default: front_left,front_right).' \
-      '                             Choices: front_left,front_right,front,rear,left,right.'
+      '  --perception-cameras NAMES  Comma-separated YOLO cameras (default: all six).' \
+      '                             Choices: front_left,front_right,front,rear,left,right.' \
+      '  --radar-names NAMES         Comma-separated radars (default: front_left,front_right,rear).'
   fi
   printf '%s\n' \
     '  --no-build  Use the existing workspace installation.' \
@@ -46,12 +46,18 @@ while (( $# > 0 )); do
   case "$1" in
     --no-build) build=false ;;
     --headless) viewer=false ;;
+    --viewer) viewer=true ;;
     --edge-only) edge_only=true ;;
     --dry-run) dry_run=true ;;
     --perception-cameras)
       (( $# >= 2 )) || argument_error '--perception-cameras requires a camera list.'
       perception_cameras="$2"
       perception_argument=true
+      shift
+      ;;
+    --radar-names)
+      (( $# >= 2 )) || argument_error '--radar-names requires a radar list.'
+      radar_names="$2"
       shift
       ;;
     --restart|--keep)
@@ -68,6 +74,20 @@ done
 if [[ "$edge_only" == true && "$perception_argument" == true ]]; then
   argument_error '--perception-cameras cannot be used with --edge-only.'
 fi
+if [[ "$edge_only" == true && "$viewer" == true ]]; then
+  argument_error '--viewer cannot be used with --edge-only.'
+fi
+[[ -n "$radar_names" && "$radar_names" != *, ]] || argument_error 'Invalid radar list.'
+IFS=, read -r -a selected_radar_names <<< "$radar_names"
+declare -A selected_radars=()
+for radar_name in "${selected_radar_names[@]}"; do
+  case "$radar_name" in
+    front_left|front_right|rear) ;;
+    *) argument_error "Unknown radar: $radar_name" ;;
+  esac
+  [[ -z "${selected_radars[$radar_name]:-}" ]] || argument_error "Duplicate radar: $radar_name"
+  selected_radars["$radar_name"]=true
+done
 [[ -n "$perception_cameras" && "$perception_cameras" != *, ]] || argument_error 'Invalid perception camera list.'
 IFS=, read -r -a selected_perception_cameras <<< "$perception_cameras"
 declare -A selected_camera_names=()
@@ -87,12 +107,14 @@ if [[ "$edge_only" == true ]]; then
 fi
 declare -A running=()
 declare -A running_perception=()
+running_perception_mode=''
 
 find_running_modules() {
   running=()
   running_perception=()
-  local process process_id module argument parent_id field value remainder camera_name
-  local -a command_args parent_args
+  running_perception_mode=''
+  local process process_id module argument parent_id field value remainder camera_name camera_names_arg
+  local -a command_args parent_args batch_camera_names
   for process in /proc/[0-9]*; do
     [[ -O "$process" && -r "$process/cmdline" ]] || continue
     command_args=()
@@ -104,6 +126,7 @@ find_running_modules() {
         "$workspace/install/dozer_radar_sr73f/lib/dozer_radar_sr73f/radar_sr73f_node") module=radar ;;
         "$workspace/install/dozer_audio/lib/dozer_audio/audio_capture_node") module=audio ;;
         "$workspace/install/dozer_perception/lib/dozer_perception/yolo_node.py") module=perception ;;
+        "$workspace/install/dozer_perception/lib/dozer_perception/yolo_batch_node.py") module=perception ;;
         "$workspace/install/dozer_fusion/lib/dozer_fusion/fusion_node.py") module=fusion ;;
         "$workspace/install/dozer_rtc_edge/lib/dozer_rtc_edge/rtc_edge") module=rtc ;;
         "$workspace/install/dozer_perception/lib/dozer_perception/detection_viewer.py") module=viewer ;;
@@ -129,17 +152,32 @@ find_running_modules() {
       process_id="${process##*/}"
       running["$module"]+="$process_id "
       if [[ "$module" == perception ]]; then
-        camera_name=unknown
-        for argument in "${command_args[@]}"; do
-          if [[ "$argument" == __node:=yolo_* ]]; then
-            camera_name="${argument#__node:=yolo_}"
-          fi
-        done
-        case "$camera_name" in
-          front_left|front_right|front|rear|left|right) ;;
-          *) camera_name=unknown ;;
-        esac
-        running_perception["$camera_name"]=$(( ${running_perception[$camera_name]:-0} + 1 ))
+        if [[ " ${command_args[*]} " == *'/yolo_batch_node.py '* ]]; then
+          [[ -z "$running_perception_mode" || "$running_perception_mode" == batch ]] || running_perception_mode=mixed
+          [[ "$running_perception_mode" == mixed ]] || running_perception_mode=batch
+          camera_names_arg=''
+          for argument in "${command_args[@]}"; do
+            [[ "$argument" == --camera-names=* ]] && camera_names_arg="${argument#--camera-names=}"
+          done
+          IFS=, read -r -a batch_camera_names <<< "$camera_names_arg"
+          for camera_name in "${batch_camera_names[@]}"; do
+            running_perception["$camera_name"]=$(( ${running_perception[$camera_name]:-0} + 1 ))
+          done
+        else
+          [[ -z "$running_perception_mode" || "$running_perception_mode" == single ]] || running_perception_mode=mixed
+          [[ "$running_perception_mode" == mixed ]] || running_perception_mode=single
+          camera_name=unknown
+          for argument in "${command_args[@]}"; do
+            if [[ "$argument" == __node:=yolo_* ]]; then
+              camera_name="${argument#__node:=yolo_}"
+            fi
+          done
+          case "$camera_name" in
+            front_left|front_right|front|rear|left|right) ;;
+            *) camera_name=unknown ;;
+          esac
+          running_perception["$camera_name"]=$(( ${running_perception[$camera_name]:-0} + 1 ))
+        fi
       fi
     fi
   done
@@ -147,6 +185,7 @@ find_running_modules() {
 
 perception_matches_selection() {
   local camera_name
+  [[ "$running_perception_mode" == batch ]] || return 1
   (( ${#running_perception[@]} == ${#selected_perception_cameras[@]} )) || return 1
   for camera_name in "${selected_perception_cameras[@]}"; do
     [[ "${running_perception[$camera_name]:-0}" == 1 ]] || return 1
@@ -159,6 +198,7 @@ prepare_launch() {
   local -a process_ids
   launch_command=(ros2 launch dozer_bringup dozer.launch.py use_camera:=false image_backend:=shm)
   launch_command+=("perception_cameras:=$perception_cameras")
+  launch_command+=("radar_names:=$radar_names")
   if [[ "$edge_only" == true ]]; then
     launch_command+=(use_radar:=false use_perception:=false use_fusion:=false
       use_static_tf:=false use_viewer:=false)
@@ -272,10 +312,14 @@ if [[ ! -f /opt/ros/humble/setup.bash ]]; then
 fi
 if [[ "$edge_only" == false ]]; then
   gpu_python="$workspace/.venv-gpu/bin/python"
-  model="$workspace/src/perception/dozer_perception/model/best.pt"
+  model="$workspace/src/perception/dozer_perception/model/best_int8_batch6.engine"
   cudnn_lib="$workspace/.venv-gpu/lib/python3.10/site-packages/nvidia/cudnn/lib"
-  if [[ ! -x "$gpu_python" || ! -f "$model" ]]; then
-    printf 'Missing GPU Python environment or YOLO model. Run ./setup_gpu_inference.sh first.\n' >&2
+  if [[ ! -x "$gpu_python" ]]; then
+    printf 'Missing GPU Python environment. Run ./setup_gpu_inference.sh.\n' >&2
+    exit 1
+  fi
+  if [[ ! -f "$model" ]]; then
+    printf 'Missing INT8 TensorRT engine: %s\n' "$model" >&2
     exit 1
   fi
   if [[ -d "$cudnn_lib" ]]; then

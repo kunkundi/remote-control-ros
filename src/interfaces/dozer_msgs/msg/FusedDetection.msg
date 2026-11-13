@@ -10,6 +10,7 @@ bool has_track_id
 uint32 track_id
 bool has_3d
 string camera_source_id       # Empty when unknown.
+string radar_source_id        # Radar name; empty for camera-only detections.
 uint8 radar_sensor_id
 uint8 radar_object_id
 float32 position_x

@@ -2,6 +2,7 @@
 """Run YOLO on shared camera frames and publish normalized ROS detections."""
 
 from pathlib import Path
+import time
 
 import numpy as np
 import rclpy
@@ -40,6 +41,8 @@ class YoloNode(Node):
         self.model = YOLO(path)
         self.get_logger().info(f'YOLO inference device: {self.device}')
         self.seq = 0
+        self.timing_started = time.monotonic()
+        self.timing_samples = []
         self.publisher = self.create_publisher(
             Detection2DArray, self.get_parameter('detections_topic').value, 10)
         backend = self.get_parameter('image_backend').value
@@ -96,8 +99,10 @@ class YoloNode(Node):
 
     def infer(self, image, header, sequence):
         height, width = image.shape[:2]
+        started = time.perf_counter()
         result = self.model.predict(image, conf=self.get_parameter('confidence').value,
                                     device=self.device, verbose=False)[0]
+        predict_ms = (time.perf_counter() - started) * 1000.0
         output = Detection2DArray()
         output.header = header
         output.source_id = self.get_parameter('source_id').value
@@ -115,6 +120,18 @@ class YoloNode(Node):
             detection.h = max(0.0, min(1.0 - detection.y, (y2 - y1) / height))
             output.detections.append(detection)
         self.publisher.publish(output)
+        self.timing_samples.append((predict_ms, result.speed.get('inference', 0.0)))
+        now = time.monotonic()
+        if now - self.timing_started >= 5.0:
+            count = len(self.timing_samples)
+            predict = [sample[0] for sample in self.timing_samples]
+            model = [sample[1] for sample in self.timing_samples]
+            self.get_logger().info(
+                f'YOLO {output.source_id}: {count} frames/{now - self.timing_started:.1f}s, '
+                f'predict avg={sum(predict) / count:.1f} max={max(predict):.1f} ms, '
+                f'model inference avg={sum(model) / count:.1f} ms')
+            self.timing_samples.clear()
+            self.timing_started = now
 
 
 def main():

@@ -6,4 +6,4 @@ if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
   printf 'No graphical display available for the detection viewer.\n' >&2
   exit 1
 fi
-exec "$workspace/start_all.sh" "$@"
+exec "$workspace/start_all.sh" --viewer --radar-names front_left "$@"

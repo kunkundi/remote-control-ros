@@ -31,7 +31,12 @@ def create_perception_nodes(context):
           return []
      parameters = os.path.join(get_package_share_directory('dozer_bringup'),
                                      'config', 'perception.yaml')
+     if LaunchConfiguration('image_backend').perform(context) == 'shm':
+          return [Node(package='dozer_perception', executable='yolo_batch_node.py',
+                       name='yolo_batch', output='screen',
+                       arguments=['--camera-names=' + ','.join(names)], parameters=[parameters])]
      return [Node(package='dozer_perception', executable='yolo_node.py', name='yolo_' + name,
+                     output='screen',
                      parameters=[parameters, {'image_backend': LaunchConfiguration('image_backend')}])
                for name in names]
 
@@ -88,6 +93,8 @@ def generate_launch_description():
                      description='启动 PCM 音频采集节点'),
         DeclareLaunchArgument('use_radar', default_value='false',
                               description='启动 SR73F 雷达驱动（参数见 config/radar.yaml）'),
+        DeclareLaunchArgument('radar_names', default_value='front_left,front_right,rear',
+                              description='启用的雷达名单，逗号分隔'),
           DeclareLaunchArgument('use_rtc_edge', default_value='false',
                                      description='启动远程驾驶 RTC edge'),
           DeclareLaunchArgument('rtc_config', default_value=os.path.join(
@@ -116,6 +123,7 @@ def generate_launch_description():
         # 驱动层
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(bringup, 'launch', 'radar.launch.py')),
+            launch_arguments={'radar_names': LaunchConfiguration('radar_names')}.items(),
             condition=IfCondition(use_radar)),
           IncludeLaunchDescription(
                PythonLaunchDescriptionSource(os.path.join(bringup, 'launch', 'audio.launch.py')),
@@ -129,11 +137,13 @@ def generate_launch_description():
 
        OpaqueFunction(function=create_perception_nodes),
         Node(package='dozer_fusion', executable='fusion_node.py', name='fusion_node',
+             output='screen',
              parameters=[os.path.join(bringup, 'config', 'fusion.yaml')],
              condition=IfCondition(use_fusion)),
         Node(package='dozer_perception', executable='detection_viewer.py',
              name='detection_viewer', condition=IfCondition(use_viewer),
-             parameters=[{'image_backend': LaunchConfiguration('image_backend')}]),
+             parameters=[{'image_backend': LaunchConfiguration('image_backend'),
+                          'cameras': LaunchConfiguration('perception_cameras')}]),
         Node(package='dozer_rtc_edge', executable='rtc_edge', name='rtc_edge',
              output='screen',
              arguments=['--config', LaunchConfiguration('rtc_config')],

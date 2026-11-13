@@ -1,11 +1,11 @@
-# 当前实机联调：SensorID 0 雷达与 video0/video1 两路相机。
-# 两路图像为 1920x1080 降采样 3 倍得到 640x360。
-# 以下内参仅为 640x360 联调初值（约 65° 水平视场），未经标定，不可用于实车定位。
+# 三台雷达与六路相机的预期匹配关系；物理映射和标定尚未核对。
+# 以下内参仅为 640x360 联调占位值，未经标定，不可用于实车定位。
 # 实车使用前必须替换为对应 image_small 分辨率的标定值，并完成图像去畸变。
 fusion_node:
   ros__parameters:
-    radar_topics: [/radar/front_left/objects]
-    camera_names: [front_left, front_right]
+    radar_topics: [/radar/front_left/objects, /radar/front_right/objects, /radar/rear/objects]
+    camera_names: [front_left, front_right, front, rear, left, right]
+    radar_camera_pairs: ["radar_front_left:front_left,front_right,left", "radar_front_right:front_left,front_right,right", "radar_rear:rear,left,right"]
     output_topic: /perception/fused_detections
     output_frame: base_link
     max_age_sec: 0.12
@@ -28,3 +28,35 @@ fusion_node:
     front_right.fy: 500.0
     front_right.cx: 320.0
     front_right.cy: 180.0
+    front.frame: camera_front_optical
+    front.detections_topic: /perception/front/detections
+    front.width: 640
+    front.height: 360
+    front.fx: 500.0
+    front.fy: 500.0
+    front.cx: 320.0
+    front.cy: 180.0
+    rear.frame: camera_rear_optical
+    rear.detections_topic: /perception/rear/detections
+    rear.width: 640
+    rear.height: 360
+    rear.fx: 500.0
+    rear.fy: 500.0
+    rear.cx: 320.0
+    rear.cy: 180.0
+    left.frame: camera_left_optical
+    left.detections_topic: /perception/left/detections
+    left.width: 640
+    left.height: 360
+    left.fx: 500.0
+    left.fy: 500.0
+    left.cx: 320.0
+    left.cy: 180.0
+    right.frame: camera_right_optical
+    right.detections_topic: /perception/right/detections
+    right.width: 640
+    right.height: 360
+    right.fx: 500.0
+    right.fy: 500.0
+    right.cx: 320.0
+    right.cy: 180.0

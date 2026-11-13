@@ -18,6 +18,7 @@ from camera_shm import CameraShmReader
 
 
 UNKNOWN_CLASS_ID = 4294967295
+CAMERAS = ('front_left', 'front_right', 'front', 'rear', 'left', 'right')
 COCO_NAMES = [
     'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck',
     'boat', 'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench',
@@ -60,7 +61,8 @@ def matching_fused(box, source, fused):
     if fused is None:
         return None
     for obj in fused.detections:
-        if obj.class_id == UNKNOWN_CLASS_ID or obj.camera_source_id != source:
+        if (obj.class_id == UNKNOWN_CLASS_ID or obj.camera_source_id != source
+                or not obj.has_3d or not obj.radar_source_id):
             continue
         if obj.class_id == box.class_id and all(abs(a - b) < 1e-4 for a, b in
                 zip((obj.x, obj.y, obj.w, obj.h), (box.x, box.y, box.w, box.h))):
@@ -121,6 +123,7 @@ class DetectionViewer(Node):
         self.declare_parameter('show_window', True)
         self.declare_parameter('image_backend', 'shm')
         self.declare_parameter('shm_prefix', 'dozer_camera_')
+        self.declare_parameter('cameras', 'front_left,front_right')
         self.declare_parameter('publish_annotated', False)
         self.declare_parameter('window_name', 'Dozer detections')
         self.declare_parameter('radar_window_name', 'Dozer radar front_left')
@@ -128,7 +131,11 @@ class DetectionViewer(Node):
         if self.show_window and not (os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')):
             self.get_logger().warn('No graphical display; preview window disabled')
             self.show_window = False
-        self.frames = {'front_left': deque(maxlen=50), 'front_right': deque(maxlen=50)}
+        self.cameras = tuple(self.get_parameter('cameras').value.split(','))
+        if not self.cameras or len(set(self.cameras)) != len(self.cameras) or any(
+                name not in CAMERAS for name in self.cameras):
+            raise ValueError('cameras must be unique comma-separated camera names')
+        self.frames = {name: deque(maxlen=50) for name in self.cameras}
         self.rendered = {}
         self.rendered_stamp = {}
         self.fused = None
@@ -143,9 +150,8 @@ class DetectionViewer(Node):
         backend = self.get_parameter('image_backend').value
         if backend not in ('shm', 'ros'):
             raise ValueError('image_backend must be shm or ros')
-        for name, detections_topic in (
-                ('front_left', '/perception/front_left/detections'),
-                ('front_right', '/perception/front_right/detections')):
+        for name in self.cameras:
+            detections_topic = f'/perception/{name}/detections'
             if backend == 'shm':
                 self.frame_readers[name] = CameraShmReader(
                     self.get_parameter('shm_prefix').value + name)
@@ -167,7 +173,7 @@ class DetectionViewer(Node):
             self.frame_timer = self.create_timer(1.0 / 60.0, self.read_shared_frames)
         if self.show_window:
             cv2.namedWindow(self.get_parameter('window_name').value, cv2.WINDOW_NORMAL)
-            cv2.resizeWindow(self.get_parameter('window_name').value, 1280, 360)
+            cv2.resizeWindow(self.get_parameter('window_name').value, 1280, 1080 if len(self.cameras) > 2 else 360)
             cv2.namedWindow(self.get_parameter('radar_window_name').value, cv2.WINDOW_NORMAL)
             cv2.resizeWindow(self.get_parameter('radar_window_name').value, 900, 700)
             self.timer = self.create_timer(0.1, self.show)
@@ -225,8 +231,12 @@ class DetectionViewer(Node):
         image = frame[1].copy()
         fused = self.fused_by_stamp.get(stamp_ns(msg.header.stamp))
         height, width = image.shape[:2]
-        unknown_count = sum(d.class_id == UNKNOWN_CLASS_ID for d in fused.detections) if fused else 0
-        cv2.putText(image, f'{name}  YOLO: {len(msg.detections)}  radar unknown: {unknown_count}',
+        unknown_count = sum(bool(d.radar_source_id) and not d.camera_source_id
+                            for d in fused.detections) if fused else 0
+        matched_count = sum(bool(d.radar_source_id) and d.camera_source_id == name
+                            for d in fused.detections) if fused else 0
+        cv2.putText(image, f'{name}  YOLO: {len(msg.detections)}  radar matched: {matched_count}'
+                    f'  radar unmatched: {unknown_count}',
                     (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
         for box in msg.detections:
             x1 = max(0, min(width - 1, int(box.x * width)))
@@ -256,7 +266,7 @@ class DetectionViewer(Node):
 
     def show(self):
         panels = []
-        for name in ('front_left', 'front_right'):
+        for name in self.cameras:
             if time.monotonic() - self.frame_received_at.get(name, 0) > 0.5:
                 panel = np.zeros((360, 640, 3), np.uint8)
                 cv2.putText(panel, name + ': CAMERA STALE', (20, 180),
@@ -268,7 +278,10 @@ class DetectionViewer(Node):
             else:
                 panel = self.rendered[name]
             panels.append(cv2.resize(panel, (640, 360)))
-        cv2.imshow(self.get_parameter('window_name').value, np.hstack(panels))
+        rows = [np.hstack(panels[index:index + 2]) for index in range(0, len(panels), 2)]
+        if len(rows) > 1 and len(panels) % 2:
+            rows[-1] = np.hstack((rows[-1], np.zeros_like(panels[-1])))
+        cv2.imshow(self.get_parameter('window_name').value, np.vstack(rows))
         fresh = self.radar_received_at is not None and time.monotonic() - self.radar_received_at < 1.0
         radar_image = draw_radar(self.radar if fresh else None)
         if not fresh:
