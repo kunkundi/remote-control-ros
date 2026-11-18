@@ -34,6 +34,7 @@ dozer_audio -> ROS PCM -> dozer_rtc_edge -> RTC console
 | 感知层 `perception/` | 检测、跟踪、融合等算法 | `dozer_perception`、`dozer_fusion` |
 | 控制层 `control/` | 车辆控制与安全看门狗 | `dozer_vehicle` |
 | 通信层 `comm/` | 与远程驾驶台的通信 | `dozer_rtc_bridge` |
+| 远程驾驶 `remote_drive/` | RTC 车端和独立操作台 | `dozer_rtc_edge`、`dozer_rtc_console` |
 | 系统层 `system/` | 启动编排、配置、工具 | `dozer_bringup`、`dozer_tools` |
 
 驱动层不依赖感知/控制/通信层；感知层通过共享内存图像协议或 ROS 消息使用传感器数据，不链接驱动代码。当前相机采集库在 edge 内运行，ROS 相机节点仅保留为调试回退。
@@ -70,7 +71,8 @@ dozer_audio -> ROS PCM -> dozer_rtc_edge -> RTC console
         ├── comm/
         │   └── dozer_rtc_bridge/   # RTC 网关（由 rtc_edge 改造而来）
         ├── remote_drive/
-        │   └── dozer_rtc_edge/     # 边缘端直采、RTC 视频、共享内存图像输出
+        │   ├── dozer_rtc_edge/     # 边缘端直采、RTC 视频、共享内存图像输出
+        │   └── dozer_rtc_console/  # 独立操作台：视频、控制、音频与检测叠框
         └── system/
             ├── dozer_bringup/      # launch、config/*.yaml、传感器外参、systemd
             └── dozer_tools/        # 模拟数据发布器、录包脚本等开发工具
@@ -82,6 +84,12 @@ dozer_audio -> ROS PCM -> dozer_rtc_edge -> RTC console
 音频由 `dozer_audio` 的 `audio_capture_node` 独占采集，发布 `/audio/capture`，edge 通过订阅接入 RTC，不再打开麦克风。使用 `ros2 launch dozer_bringup audio.launch.py` 或总启动入口的 `use_audio:=true` 启动；设备参数见 `dozer_bringup/config/audio.yaml`。远端音频播放仍由 edge 调用驱动库。
 运行配置集中在 `dozer_bringup/config/rtc_edge/`，构建、依赖与当前限制见 [src/remote_drive/dozer_rtc_edge/README.md](src/remote_drive/dozer_rtc_edge/README.md)。
 它尚未完成 ROS 检测结果上传与 `/vehicle/*` 翻译，不替代规划中的 `dozer_rtc_bridge`。
+
+`dozer_rtc_console` 从 rtc-framework 迁入应用源码和测试，独立构建和运行，不依赖 edge 包，
+也不加入车端一键启动。共享源码、协议和匹配的 SDK 头文件已迁入包内，SDK 库与模型作为本地发行资产保存，
+console 的构建和运行不再访问外部 rtc-framework；edge 与旧 bridge 的依赖保持不变。
+配置集中在 `dozer_bringup/config/rtc_console/`。构建和资产交付要求见
+[src/remote_drive/dozer_rtc_console/README.md](src/remote_drive/dozer_rtc_console/README.md)。
 
 单个 C++ 包内部结构：
 
@@ -111,6 +119,7 @@ dozer_xxx/
 | `dozer_fusion` | 感知 | 雷达 + 视觉融合 | 雷达、检测、tf | `/fusion/objects` | 待定 | 后期 |
 | `dozer_vehicle` | 控制 | 驾驶指令看门狗、换档、车辆接口 | `/vehicle/drive_cmd`、`/vehicle/set_gear` | `/vehicle/state` | 待定 | 骨架 |
 | `dozer_rtc_bridge` | 通信 | 视频推流、结果上传、控制下行 | 相机帧、上述 topic、DataChannel | 视频、DataChannel、`/vehicle/*` | RTC 模块负责人 | 骨架 |
+| `dozer_rtc_console` | 远程驾驶 | 独立操作台、视频显示、控制与检测叠框 | RTC 视频、音频、DataChannel | RTC 控制与视图请求 | 待定 | 已迁入，构建与无硬件测试通过，待实际联调 |
 | `dozer_bringup` | 系统 | 启动编排、参数、外参 | — | `/tf_static` | 集成负责人 | 骨架 |
 | `dozer_tools` | 系统 | 模拟数据、录包 | — | — | 集成负责人 | 可用 |
 
@@ -216,6 +225,27 @@ ROS_DOMAIN_ID=182 ROS_LOCALHOST_ONLY=1 \
 ```
 
 当前 16 项 CTest 覆盖图像接入、共享内存隔离与过期处理、跨语言消费，以及相机名单和启动保护；其中感知与 bringup 测试分别包含 6 项、8 项 Python 用例。这些测试不打开真实相机、不重启运行服务，也不代表六路 GPU 推理、RTC 接收帧率或实车融合精度已经验收。
+
+### 3.4 独立 RTC Console
+
+console 不随 `start_all.sh` 或 `start_edge.sh` 启动。在工作空间根目录单独执行：
+
+```bash
+source /opt/ros/humble/setup.bash
+colcon build --packages-up-to dozer_rtc_console --cmake-args -DCMAKE_BUILD_TYPE=Release
+source install/setup.bash
+ros2 run dozer_rtc_console rtc_console
+```
+
+使用源码中的集中配置，避免修改安装副本：
+
+```bash
+ros2 run dozer_rtc_console rtc_console \
+  --config "$PWD/src/system/dozer_bringup/config/rtc_console/rtc.cfg"
+```
+
+默认不自动打开房间，需在操作台中操作；console 和 edge 的信令服务、房间与认证设置需相互匹配。
+本模块没有新增 ROS 订阅，也未实现 `/fusion/objects` 上传；外部依赖、无窗口模式及测试命令见模块文档。
 
 ---
 
