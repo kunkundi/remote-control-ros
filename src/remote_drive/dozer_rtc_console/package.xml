@@ -9,5 +9,7 @@
   <depend>dozer_audio</depend>
   <depend>nlohmann-json-dev</depend>
   <depend>libgl-dev</depend>
+  <build_depend>protobuf-dev</build_depend>
+  <exec_depend>protobuf</exec_depend>
   <export><build_type>ament_cmake</build_type></export>
 </package>

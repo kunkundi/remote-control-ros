@@ -85,9 +85,6 @@ DualCameraStreamingModule::~DualCameraStreamingModule() { Stop(); }
 bool DualCameraStreamingModule::Start(std::string* error_message) {
   if (started_) { return true; }
   try {
-    if (options_.yolo_enabled) {
-      throw std::invalid_argument("ROS camera input uses dozer_perception; disable edge local YOLO in rtc.cfg");
-    }
     const bool direct_left = options_.capture.left_device.find("/dev/video") == 0;
     const bool direct_right = options_.capture.right_device.find("/dev/video") == 0;
     if (direct_left != direct_right) {

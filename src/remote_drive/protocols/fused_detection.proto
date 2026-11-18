@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package dozer.perception.v1;
+
+message FusedSnapshot {
+  uint64 sequence = 1;
+  int64 capture_time_ns = 2;
+  string frame_id = 3;
+  string source_id = 4;
+  uint64 frame_seq = 5;
+  uint32 image_width = 6;
+  uint32 image_height = 7;
+  repeated FusedTarget targets = 8;
+}
+
+message FusedTarget {
+  uint32 class_id = 1;
+  float score = 2;
+  float x = 3;
+  float y = 4;
+  float width = 5;
+  float height = 6;
+  bool has_track_id = 7;
+  uint32 track_id = 8;
+  bool has_3d = 9;
+  string camera_source_id = 10;
+  string radar_source_id = 11;
+  uint32 radar_sensor_id = 12;
+  uint32 radar_object_id = 13;
+  float position_x = 14;
+  float position_y = 15;
+  float position_z = 16;
+  float velocity_x = 17;
+  float velocity_y = 18;
+  float velocity_z = 19;
+  float radar_rcs = 20;
+}

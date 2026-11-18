@@ -16,6 +16,8 @@
   <depend>libssl-dev</depend>
   <depend>libasio-dev</depend>
   <depend>nlohmann-json-dev</depend>
+  <build_depend>protobuf-dev</build_depend>
+  <exec_depend>protobuf</exec_depend>
   <exec_depend>ros2launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <export><build_type>ament_cmake</build_type></export>

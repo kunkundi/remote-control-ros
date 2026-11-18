@@ -6,10 +6,6 @@
 #include <memory>
 #include <string>
 
-namespace rtc_camera_headless {
-class YoloFrameConsumer;
-}  // 命名空间 rtc_camera_headless
-
 namespace rtc_camera {
 namespace dual {
 class DualUyvyFrameConverter;
@@ -27,9 +23,6 @@ class DirectImageSource;
 
 struct DualCameraStreamingModuleOptions {
   rtc_camera::dual::AsyncDualCameraImageSourceOptions capture;
-  bool yolo_enabled = true;
-  size_t yolo_max_fps = 15;
-  size_t yolo_processing_downscale = 2;
 };
 
 class DualCameraStreamingModule {

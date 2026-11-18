@@ -15,7 +15,10 @@
 #include "rtc_runtime/device_identity.h"
 #include "rtc_vehicle/vehicle_control_interface.h"
 #include "rtc_vehicle_protocol/vehicle_control_protocol.h"
-#include "rtc_vision/vision_detection_codec.h"
+#include "dozer_rtc_edge/ros_context.h"
+#include "dozer_msgs/msg/fused_detection_array.hpp"
+#include "fused_detection.pb.h"
+#include "fused_detection_channel.h"
 #include "rtc_vision/view_control_protocol.h"
 #include "rtc_dog/dog_command_forwarder.h"
 
@@ -29,12 +32,114 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
 namespace rtc_edge_app {
 namespace {
 
 using rtc_runtime::RtcSession;
+namespace fused = dozer::perception::v1;
+
+class FusedDetectionPublisher {
+ public:
+  void Start() {
+    const auto context = rtc_edge::AcquireRosContext();
+    node_ = std::make_shared<rclcpp::Node>(
+        "rtc_fused_detection", rclcpp::NodeOptions().context(context));
+    subscription_ = node_->create_subscription<dozer_msgs::msg::FusedDetectionArray>(
+        "/perception/fused_detections", rclcpp::SensorDataQoS().keep_last(1),
+        [this](dozer_msgs::msg::FusedDetectionArray::ConstSharedPtr message) {
+          latest_ = std::move(message);
+        });
+    rclcpp::ExecutorOptions options;
+    options.context = context;
+    executor_ = std::make_unique<rclcpp::executors::SingleThreadedExecutor>(options);
+    executor_->add_node(node_);
+  }
+
+  void ChannelState(RtcSessionId peer, RtcDataChannelState state) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (state == DataChannelOpen) {
+      peers_.insert(peer);
+    } else if (state == DataChannelClosed) {
+      peers_.erase(peer);
+    }
+  }
+
+  void ClearPeers() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    peers_.clear();
+  }
+
+  void Tick(bool ready) {
+    executor_->spin_some();
+    auto message = std::move(latest_);
+    if (!message || !ready) return;
+    std::unordered_set<RtcSessionId> peers;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      peers = peers_;
+    }
+    if (peers.empty()) return;
+
+    fused::FusedSnapshot snapshot;
+    snapshot.set_sequence(++sequence_);
+    snapshot.set_capture_time_ns(static_cast<int64_t>(message->header.stamp.sec) *
+                                1000000000LL + message->header.stamp.nanosec);
+    snapshot.set_frame_id(message->header.frame_id);
+    snapshot.set_source_id(message->source_id);
+    snapshot.set_frame_seq(message->frame_seq);
+    snapshot.set_image_width(message->image_width);
+    snapshot.set_image_height(message->image_height);
+    for (const auto& detection : message->detections) {
+      auto* target = snapshot.add_targets();
+      target->set_class_id(detection.class_id);
+      target->set_score(detection.score);
+      target->set_x(detection.x);
+      target->set_y(detection.y);
+      target->set_width(detection.w);
+      target->set_height(detection.h);
+      target->set_has_track_id(detection.has_track_id);
+      target->set_track_id(detection.track_id);
+      target->set_has_3d(detection.has_3d);
+      target->set_camera_source_id(detection.camera_source_id);
+      target->set_radar_source_id(detection.radar_source_id);
+      target->set_radar_sensor_id(detection.radar_sensor_id);
+      target->set_radar_object_id(detection.radar_object_id);
+      target->set_position_x(detection.position_x);
+      target->set_position_y(detection.position_y);
+      target->set_position_z(detection.position_z);
+      target->set_velocity_x(detection.velocity_x);
+      target->set_velocity_y(detection.velocity_y);
+      target->set_velocity_z(detection.velocity_z);
+      target->set_radar_rcs(detection.radar_rcs);
+    }
+    std::string payload;
+    if (snapshot.ByteSizeLong() > fused::kMaxFusedSnapshotBytes ||
+        !snapshot.SerializeToString(&payload)) {
+      RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000,
+                           "Dropping oversized or unencodable fused snapshot");
+      return;
+    }
+    for (const auto peer : peers) {
+      if (RtcSendData(peer, fused::kFusedDetectionChannel, payload.data(),
+                      payload.size()) != RtcErrorCode::OK) {
+        RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000,
+                             "Failed to send fused snapshot over RTC");
+      }
+    }
+  }
+
+ private:
+  rclcpp::Node::SharedPtr node_;
+  rclcpp::Subscription<dozer_msgs::msg::FusedDetectionArray>::SharedPtr subscription_;
+  std::unique_ptr<rclcpp::executors::SingleThreadedExecutor> executor_;
+  dozer_msgs::msg::FusedDetectionArray::ConstSharedPtr latest_;
+  std::mutex mutex_;
+  std::unordered_set<RtcSessionId> peers_;
+  uint64_t sequence_ = 0;
+};
 
 constexpr uint64_t kInactiveVideoViewSendIntervalMs = 1000;
 constexpr uint64_t kMaxMainLoopSleepMs = 10;
@@ -583,8 +688,7 @@ RtcSession::ExternalVideoSourceConfig MakeVideoSource(
 
 RtcSession::Features MakeVehicleRtcFeatures(
     const SurroundCameraOptions& surround,
-    const AudioOptions& audio,
-    bool yolo_enabled) {
+  const AudioOptions& audio) {
   RtcSession::Features features;
   features.enable_data_channel = false;
   features.enable_external_audio_source = audio.input_enabled;
@@ -607,11 +711,8 @@ RtcSession::Features MakeVehicleRtcFeatures(
   features.additional_data_channels.push_back(MakeDataChannel(
       vts_rtc::vision::kVideoViewControlChannelLabel, RtcPriorityType::High,
       true, -1));
-  if (yolo_enabled) {
-    features.additional_data_channels.push_back(MakeDataChannel(
-        vts_rtc::vision::kVisionDetectionChannelLabel,
-        RtcPriorityType::Medium, false, 0));
-  }
+  features.additional_data_channels.push_back(MakeDataChannel(
+      fused::kFusedDetectionChannel, RtcPriorityType::Medium, false, 0));
   if (!surround.front_device.empty() || !surround.rear_device.empty() ||
       !surround.left_device.empty() || !surround.right_device.empty()) {
     features.additional_external_video_sources.push_back(MakeVideoSource("surround_grid"));
@@ -798,7 +899,8 @@ void ShutdownApplication(
 void RunMainLoop(const EdgeOptions& options,
                  rtc_vehicle::VehicleControlModule& control_module,
                  RtcSession& rtc_session,
-                 EdgeCameraModules& camera_modules) {
+                 EdgeCameraModules& camera_modules,
+                 FusedDetectionPublisher& fused_publisher) {
   const uint64_t main_loop_sleep_ms =
       std::max<uint64_t>(
           1, std::min<uint64_t>(kMaxMainLoopSleepMs,
@@ -806,6 +908,7 @@ void RunMainLoop(const EdgeOptions& options,
   while (!rtc_runtime::StopRequested()) {
     rtc_session.Tick();
     control_module.Tick(GetSteadyTimeMs());
+    fused_publisher.Tick(rtc_session.IsReadyToSend());
 
     std::string camera_error;
     if (!camera_modules.Tick(&camera_error)) {
@@ -867,14 +970,30 @@ int RunEdgeApplication(const EdgeOptions& options) {
 
   EdgeCameraModules camera_modules(options);
   EdgeAudioModule audio_module(options.audio);
+  FusedDetectionPublisher fused_publisher;
   RtcSession::Callbacks callbacks =
       MakeVehicleRtcCallbacks(&control_module, &camera_modules, &audio_module);
   const auto datachannel_state = callbacks.datachannel_state;
+  const auto p2p_state = callbacks.p2p_state;
+  callbacks.p2p_state = [p2p_state, &fused_publisher](RtcSessionId peer, RtcP2PState state) {
+    p2p_state(peer, state);
+    if (state == P2PDisconnected || state == P2PFailed || state == P2PClosed) {
+      fused_publisher.ChannelState(peer, DataChannelClosed);
+    }
+  };
+  const auto server_state = callbacks.server_connection_state;
+  callbacks.server_connection_state = [server_state, &fused_publisher](RtcServerConnectionState state) {
+    server_state(state);
+    if (state != ServerLogined) fused_publisher.ClearPeers();
+  };
   callbacks.datachannel_state =
-      [datachannel_state, &options](RtcSessionId remote_sessionid,
+      [datachannel_state, &options, &fused_publisher](RtcSessionId remote_sessionid,
                                    RtcDataChannelLabel label,
                                    RtcDataChannelState state) {
         datachannel_state(remote_sessionid, label, state);
+        if (label && std::strcmp(label, fused::kFusedDetectionChannel) == 0) {
+          fused_publisher.ChannelState(remote_sessionid, state);
+        }
         if (state == DataChannelOpen && label != nullptr &&
             std::string(label) == rtc_runtime::kDeviceIdentityChannelLabel &&
             !options.device_id.empty()) {
@@ -888,11 +1007,11 @@ int RunEdgeApplication(const EdgeOptions& options) {
       };
   RtcSession rtc_session(
       options.rtc,
-      MakeVehicleRtcFeatures(options.surround_camera, options.audio,
-                             options.camera.yolo_enabled),
+      MakeVehicleRtcFeatures(options.surround_camera, options.audio),
       callbacks);
 
   try {
+    fused_publisher.Start();
     std::string control_error;
     if (!control_module.Start(&control_error)) {
       throw std::runtime_error(std::string("Vehicle control module failed to start: ") +
@@ -914,7 +1033,7 @@ int RunEdgeApplication(const EdgeOptions& options) {
                                camera_error);
     }
 
-    RunMainLoop(options, control_module, rtc_session, camera_modules);
+    RunMainLoop(options, control_module, rtc_session, camera_modules, fused_publisher);
   } catch (...) {
     // 运行中任意步骤失败时，都按相同顺序关闭已启动的模块。
     ShutdownApplication(control_module, rtc_session, camera_modules,

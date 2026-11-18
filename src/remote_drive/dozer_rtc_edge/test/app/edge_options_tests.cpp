@@ -56,9 +56,6 @@ nlohmann::json MakeValidConfig() {
   root["edge"]["surround_camera"]["left_device"] = "/dev/video8";
   root["edge"]["surround_camera"]["right_device"] = "/dev/video9";
 
-  root["edge"]["yolo"]["enabled"] = true;
-  root["edge"]["yolo"]["max_fps"] = 12;
-  root["edge"]["yolo"]["processing_downscale"] = 4;
 
   root["edge"]["vehicle_control"]["watchdog_ms"] = 250;
   root["edge"]["vehicle_control"]["state_interval_ms"] = 40;
@@ -161,10 +158,6 @@ void TestValidConfig() {
         "load surround front camera");
   Check(options.surround_camera.right_device == "/dev/video9",
         "load surround right camera");
-  Check(options.camera.yolo_enabled, "load YOLO enabled");
-  Check(options.camera.yolo_max_fps == 12, "load YOLO max FPS");
-  Check(options.camera.yolo_processing_downscale == 4,
-        "load YOLO processing downscale");
   Check(options.control.watchdog_ms == 250, "load watchdog");
   Check(options.control.max_pending_events == 64,
         "load pending event limit");
@@ -183,11 +176,6 @@ void TestRepositoryConfig() {
       options.surround_camera.left_device == "/dev/video4" &&
       options.surround_camera.right_device == "/dev/video5",
       "load all surround camera devices");
-  Check(!options.camera.yolo_enabled, "disable repository edge YOLO");
-  Check(options.camera.yolo_max_fps == 15,
-        "load repository YOLO max FPS");
-  Check(options.camera.yolo_processing_downscale == 2,
-        "load repository YOLO processing downscale");
   Check(options.control.watchdog_ms == 300,
         "load repository watchdog");
     Check(options.audio.input_enabled && options.audio.output_enabled,
@@ -354,88 +342,6 @@ void TestEmptySurroundCameraDevice() {
   std::remove(path.c_str());
 }
 
-void TestInvalidYoloDownscale() {
-  const std::string path = "rtc_edge_options_yolo_downscale.json";
-  nlohmann::json config = MakeValidConfig();
-  config["edge"]["yolo"]["processing_downscale"] = 9;
-  WriteConfig(path, config);
-
-  bool rejected = false;
-  try {
-    rtc_edge_app::LoadEdgeOptions(path);
-  } catch (const std::runtime_error& ex) {
-    const std::string error_message = ex.what();
-    rejected = error_message.find("edge.yolo.processing_downscale") !=
-                   std::string::npos &&
-               IsAsciiText(error_message);
-  }
-  Check(rejected, "reject invalid YOLO processing downscale");
-  std::remove(path.c_str());
-}
-
-void TestInvalidYoloMaxFps() {
-  const std::string path = "rtc_edge_options_yolo_max_fps.json";
-  nlohmann::json config = MakeValidConfig();
-  config["edge"]["yolo"]["max_fps"] = 241;
-  WriteConfig(path, config);
-
-  bool rejected = false;
-  try {
-    rtc_edge_app::LoadEdgeOptions(path);
-  } catch (const std::runtime_error& ex) {
-    rejected = std::string(ex.what()).find("edge.yolo.max_fps") !=
-               std::string::npos;
-  }
-  Check(rejected, "reject invalid YOLO max FPS");
-  std::remove(path.c_str());
-}
-
-void TestYoloModes() {
-  const std::string path = "rtc_edge_yolo_modes_test.json";
-  const std::string external = "rtc_edge_yolo_modes_external.json";
-  for (const auto* mode : {"console", "edge", "disabled"}) {
-    for (bool enabled : {false, true}) {
-      auto root = MakeValidConfig();
-      root["yolo"] = {{"mode", mode}};
-      root["edge"]["yolo"]["enabled"] = enabled;
-      WriteConfig(path, root);
-      Check(rtc_edge_app::LoadEdgeOptions(path).camera.yolo_enabled ==
-                (std::string(mode) == "edge"),
-            "shared mode overrides legacy edge switch");
-      root["edge"]["yolo"].erase("enabled");
-      WriteConfig(external, root["edge"]);
-      root["edge"] = {{"config", external}};
-      root["console"] = {{"config", "missing-console.json"}};
-      WriteConfig(path, root);
-      Check(rtc_edge_app::LoadEdgeOptions(path).camera.yolo_enabled ==
-                (std::string(mode) == "edge"),
-            "shared mode applies to external edge config without legacy switch or console file");
-    }
-  }
-  for (bool enabled : {false, true}) {
-    auto root = MakeValidConfig();
-    root["edge"]["yolo"]["enabled"] = enabled;
-    WriteConfig(path, root);
-    Check(rtc_edge_app::LoadEdgeOptions(path).camera.yolo_enabled == enabled,
-          "preserve legacy edge switch when shared mode is absent");
-  }
-  for (const auto& invalid : {"null", "[]", "{}", "{\"mode\":null}",
-                              "{\"mode\":true}", "{\"mode\":1}",
-                              "{\"mode\":\"\"}", "{\"mode\":\"auto\"}"}) {
-    auto root = MakeValidConfig();
-    root["yolo"] = nlohmann::json::parse(invalid);
-    WriteConfig(path, root);
-    bool rejected = false;
-    try { rtc_edge_app::LoadEdgeOptions(path); }
-    catch (const std::runtime_error& error) {
-      rejected = std::string(error.what()).find("yolo.mode") != std::string::npos;
-    }
-    Check(rejected, "reject malformed or unknown shared YOLO mode");
-  }
-  std::remove(path.c_str());
-  std::remove(external.c_str());
-}
-
 void TestDogControlConfig() {
   const std::string path = "rtc_edge_options_dog.json";
   nlohmann::json config = MakeValidConfig();
@@ -521,9 +427,6 @@ int main(int argc, char** argv) {
   TestMissingCameraDevice();
   TestMissingSurroundCameraDevice();
   TestEmptySurroundCameraDevice();
-  TestInvalidYoloDownscale();
-  TestInvalidYoloMaxFps();
-  TestYoloModes();
   TestDogControlConfig();
   TestInvalidDogSpeed();
   std::cout << "rtc_edge_options_tests passed" << std::endl;

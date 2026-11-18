@@ -98,7 +98,11 @@ ros2 run dozer_rtc_edge rtc_edge --config "$PWD/src/system/dozer_bringup/config/
 
 保留会话、视频源、音频、视图切换、控制协议和 300 ms 看门狗。车辆控制默认 debug 模式，不会替代 `dozer_vehicle`，也尚未接入 `/vehicle/*`。禁止在未实现并审查车辆适配前用于真实车辆执行。
 
-相机相关本地 YOLO 路径已从构建移除；启用 edge YOLO 会明确报错。检测由现有 `dozer_perception` 负责，但 ROS 检测结果到 RTC DataChannel 的翻译尚未实现。`dozer_rtc_bridge` 骨架保持不变，避免混淆模块职责。
+本地 YOLO 已从 edge 和 console 移除。`dozer_perception` 仍负责视觉检测，`dozer_fusion` 在 `/perception/fused_detections` 发布 `dozer_msgs/msg/FusedDetectionArray`。edge 只保留最新待发快照，在打开的 `perception.fused.v1` DataChannel 上按设备发送；通道无序、不重传，单包上限为 16 KiB，超限丢弃整包，不影响车辆控制协议。
+
+两端构建均需要 `libprotobuf-dev` 和 `protobuf-compiler`，通过同一个 `src/remote_drive/protocols/fused_detection.proto` 生成 C++ 类型。该通道使用独立序号丢弃乱序包，同时保留 ROS 原始时间戳、`frame_seq`、坐标系和全部目标字段。升级时需同步部署 edge 和 console；车辆控制仍使用原 nanopb 协议。
+
+现场启动后，可先用 `ros2 topic echo /perception/fused_detections --once` 确认 ROS 侧已有数据，再让两端进入同一 RTC 房间，观察对应相机叠框。仅启动 edge 不会启动感知节点或生成检测数据。
 
 测试包含上游参数、视频发送规划、控制协议、控制模块及视图协议回归，以及 ROS 图像校验、发布订阅和双目配对。音频订阅测试覆盖 PCM 格式、坏帧拒绝、音频与相机共享 context；`dozer_audio` 使用 SDL dummy 后端覆盖设备层和采集节点发布，不打开真实声卡。构建和无硬件测试不代表已完成实机相机、音频、远程视频或控制链路验证。
 

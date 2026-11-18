@@ -1,7 +1,5 @@
 #pragma once
 
-#include "rtc_runtime/yolo_mode.h"
-
 #include <array>
 #include <map>
 #include <string>
@@ -20,9 +18,6 @@ struct AppOptions {
 
 struct AppConfig {
   nlohmann::json rtc_settings = nlohmann::json::object();
-  rtc_runtime::YoloMode yolo_mode = rtc_runtime::YoloMode::Console;
-  int yolo_max_fps = 15;
-  std::string yolo_model_path;
   std::map<std::string, std::vector<std::string>> key_bindings{
       {"toggle_interleave", {"I"}}, {"toggle_view", {"S"}},
       {"select_1", {"1"}}, {"select_2", {"2"}},

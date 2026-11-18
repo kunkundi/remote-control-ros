@@ -2,7 +2,6 @@
 
 #include "rtc_runtime/device_identity.h"
 #include "rtc_runtime/process_runtime.h"
-#include "rtc_runtime/yolo_mode.h"
 #include "rtc_vehicle_protocol/vehicle_control_protocol.h"
 
 #include <stdint.h>
@@ -264,7 +263,6 @@ EdgeOptions LoadEdgeOptions(const std::string& config_path) {
       ReadObject(edge, "stereo_camera", "edge");
   const nlohmann::json& surround_camera =
       ReadObject(edge, "surround_camera", "edge");
-  const nlohmann::json& yolo = ReadObject(edge, "yolo", "edge");
   const nlohmann::json& control =
       ReadObject(edge, "vehicle_control", "edge");
 
@@ -326,17 +324,6 @@ EdgeOptions LoadEdgeOptions(const std::string& config_path) {
       resolved_path, options.surround_camera.left_device);
   options.surround_camera.right_device = ResolveLocalMediaPath(
       resolved_path, options.surround_camera.right_device);
-
-  const bool legacy_yolo_enabled = yolo.contains("enabled") &&
-      ReadBoolean(yolo, "enabled", "edge.yolo");
-  options.camera.yolo_enabled = rtc_runtime::ReadYoloMode(
-      root, legacy_yolo_enabled ? rtc_runtime::YoloMode::Edge
-                                : rtc_runtime::YoloMode::Disabled) ==
-      rtc_runtime::YoloMode::Edge;
-  options.camera.yolo_max_fps = static_cast<size_t>(
-      ReadInteger(yolo, "max_fps", "edge.yolo", 0, 240));
-  options.camera.yolo_processing_downscale = static_cast<size_t>(ReadInteger(
-      yolo, "processing_downscale", "edge.yolo", 1, 8));
 
   const int watchdog_ms = ReadInteger(
       control, "watchdog_ms", "edge.vehicle_control", 1,

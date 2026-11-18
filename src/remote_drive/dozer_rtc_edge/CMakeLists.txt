@@ -42,9 +42,7 @@ set_target_properties(vtsrtc_sdk PROPERTIES IMPORTED_LOCATION "${VTSRTC_LIBRARY}
 set(app "${CMAKE_CURRENT_SOURCE_DIR}/src/app")
 add_library(edge_dependencies INTERFACE)
 target_include_directories(edge_dependencies INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/include")
-foreach(protocol vehicle vision)
-  target_include_directories(edge_dependencies INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/protocols/${protocol}/generated")
-endforeach()
+target_include_directories(edge_dependencies INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/protocols/vehicle/generated")
 target_include_directories(edge_dependencies INTERFACE "${NANOPB_INCLUDE_DIR}" "${ASIO_INCLUDE_DIR}" "${SIMPLE_WS_INCLUDE_DIR}" ${OpenCV_INCLUDE_DIRS})
 target_compile_definitions(edge_dependencies INTERFACE ASIO_STANDALONE USE_STANDALONE_ASIO)
 target_include_directories(edge_dependencies INTERFACE "${LIBYUV_INCLUDE_DIR}")
@@ -59,8 +57,6 @@ add_library(edge_support STATIC
   src/dog/dog_command_forwarder.cpp
   protocols/vehicle/generated/rtc_vehicle.pb.c
   src/protocols/vehicle/vehicle_control_protocol.cpp
-  protocols/vision/generated/vision_detection.pb.c
-  src/protocols/vision/vision_detection_codec.cpp
   src/protocols/vision/view_control_protocol.cpp)
 target_link_libraries(edge_support edge_dependencies)
 ament_target_dependencies(edge_support rclcpp)
@@ -80,13 +76,14 @@ add_library(edge_direct_camera STATIC
 target_link_libraries(edge_direct_camera PUBLIC edge_support CUDA::cudart "${LIBYUV_LIBRARY}")
 target_compile_options(edge_direct_camera PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
 
+include(../protocols/fused_detection.cmake)
 add_executable(rtc_edge
   ${app}/main.cpp ${app}/edge_options.cpp ${app}/edge_application.cpp ${app}/video_send_planner.cpp
   src/ros/ros_context.cpp
   src/ros/ros_audio_source.cpp
   src/ros/ros_image_source.cpp
   src/ros/ros_camera_streaming.cpp)
-target_link_libraries(rtc_edge edge_direct_camera)
+target_link_libraries(rtc_edge edge_direct_camera fused_detection_protocol)
 ament_target_dependencies(rtc_edge rclcpp sensor_msgs dozer_msgs)
 get_filename_component(vtsrtc_library_dir "${VTSRTC_LIBRARY}" DIRECTORY)
 set_target_properties(rtc_edge PROPERTIES INSTALL_RPATH "${vtsrtc_library_dir}")

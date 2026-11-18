@@ -58,7 +58,6 @@ static AppConfig ParseConfig(const nlohmann::json& root) {
   config.rtc_settings.erase("edge");
   config.rtc_settings.erase("yolo");
   if (!root.contains("console")) {
-    config.yolo_mode = rtc_runtime::ReadYoloMode(root, config.yolo_mode);
     return config;
   }
 
@@ -66,33 +65,6 @@ static AppConfig ParseConfig(const nlohmann::json& root) {
   if (!console.is_object()) {
     throw std::runtime_error("config field must be an object: console");
   }
-  if (console.contains("yolo")) {
-    const auto& yolo = console.at("yolo");
-    if (!yolo.is_object()) {
-      throw std::runtime_error("console.yolo must be an object");
-    }
-    if (yolo.contains("enabled")) {
-      if (!yolo.at("enabled").is_boolean()) {
-        throw std::runtime_error("console.yolo.enabled must be a boolean");
-      }
-      config.yolo_mode = yolo.at("enabled").get<bool>()
-          ? rtc_runtime::YoloMode::Console : rtc_runtime::YoloMode::Edge;
-    }
-    if (yolo.contains("max_fps")) {
-      if (!yolo.at("max_fps").is_number_integer() ||
-          yolo.at("max_fps") < 1 || yolo.at("max_fps") > 240) {
-        throw std::runtime_error("console.yolo.max_fps must be in [1, 240]");
-      }
-      config.yolo_max_fps = yolo.at("max_fps").get<int>();
-    }
-    if (yolo.contains("model")) {
-      if (!yolo.at("model").is_string()) {
-        throw std::runtime_error("console.yolo.model must be a string");
-      }
-      config.yolo_model_path = yolo.at("model").get<std::string>();
-    }
-  }
-  config.yolo_mode = rtc_runtime::ReadYoloMode(root, config.yolo_mode);
   if (console.contains("key_bindings")) {
     const auto& bindings = console.at("key_bindings");
     if (!bindings.is_object()) {
@@ -249,8 +221,6 @@ void SaveConfig(const std::string& config_path, const AppConfig& config) {
       {"room", config.room_id}, {"auto_open_room", config.auto_open_room},
       {"device_slots", config.device_slots},
       {"key_bindings", config.key_bindings},
-      {"yolo", {{"max_fps", config.yolo_max_fps},
-                {"model", config.yolo_model_path}}},
       {"steering", {{"wheel_range_deg", config.steering_wheel_range_deg}}}};
   if (config.steering_servo_calibrated) {
     section["steering"]["servo"] = {
@@ -258,8 +228,7 @@ void SaveConfig(const std::string& config_path, const AppConfig& config) {
         {"center_deg", config.steering_servo_center_deg},
         {"right_deg", config.steering_servo_right_deg}};
   }
-  const nlohmann::json yolo = {{"mode", rtc_runtime::YoloModeName(config.yolo_mode)}};
-  ParseConfig(nlohmann::json{{"yolo", yolo}, {"console", section}});
+  ParseConfig(nlohmann::json{{"console", section}});
   std::ifstream input(config_path);
   if (!input.is_open()) {
     throw std::runtime_error("failed to open config file: " + config_path);
@@ -299,8 +268,7 @@ void SaveConfig(const std::string& config_path, const AppConfig& config) {
     }
   }
   root.update(config.rtc_settings);
-  if (!root.contains("yolo")) root["yolo"] = nlohmann::json::object();
-  root["yolo"].update(yolo);
+  root.erase("yolo");
   nlohmann::json resolved = root;
   rtc_runtime::LoadConfigSection(resolved, "console", config_path);
   std::string destination = config_path;
@@ -317,7 +285,7 @@ void SaveConfig(const std::string& config_path, const AppConfig& config) {
   }
   nlohmann::json merged = resolved.value("console", nlohmann::json::object());
   merged.merge_patch(section);
-  merged["yolo"].erase("enabled");
+  merged.erase("yolo");
   if (!config.steering_servo_calibrated) {
     merged["steering"].erase("servo");
   }
@@ -327,8 +295,7 @@ void SaveConfig(const std::string& config_path, const AppConfig& config) {
   } else {
     root["console"] = std::move(merged);
   }
-  ParseConfig(nlohmann::json{{"yolo", yolo},
-                           {"console", external ? root : root.at("console")}});
+  ParseConfig(nlohmann::json{{"console", external ? root : root.at("console")}});
   input.close();
   const std::string temporary = destination + ".tmp";
   {

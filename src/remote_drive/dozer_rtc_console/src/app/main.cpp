@@ -6,15 +6,13 @@
 #include "video_composite_layout.h"
 #include "video_detection_overlay.h"
 #include "rtc_vehicle_protocol/vehicle_control_protocol.h"
-#include "rtc_vision/vision_detection_codec.h"
+#include "fused_detection_view.h"
 #include "rtc_vision/view_control_protocol.h"
 #include "video_view_state.h"
 #include "video_fullscreen_state.h"
 #include "vehicle_control_sender.h"
 #include "vehicle_state_log_limiter.h"
-#include "local_yolo.h"
 #include "console_ui.h"
-#include "rtc_vision/coco_labels.h"
 
 #include <imgui.h>
 #include <backends/imgui_impl_opengl3.h>
@@ -137,15 +135,7 @@ struct VideoTextureView {
   std::vector<unsigned char> remapped_buffer;
 };
 
-struct VisionDetectionOverlayView {
-  vts_rtc::vision::FrameDetections frame_detections;
-  std::chrono::steady_clock::time_point updated_at;
-};
-
-struct VisionOverlaySnapshot {
-  VisionDetectionOverlayView overlay;
-  std::map<uint32_t, std::string> class_labels_by_id;
-};
+namespace fused = dozer::perception::v1;
 
 struct EdgeFeedbackView {
   uint64_t envelope_seq = 0;
@@ -611,7 +601,6 @@ class RtcConsoleApp {
   }
 
   ~RtcConsoleApp() {
-    local_yolo_.Stop();
     StopMediaFeed();
     remote_audio_player_.Stop();
     DestroyRtc();
@@ -647,34 +636,6 @@ class RtcConsoleApp {
       }
     }
     steering_wheel_range_deg_ = config.steering_wheel_range_deg;
-    yolo_mode_ = config.yolo_mode;
-    if (yolo_mode_ == rtc_runtime::YoloMode::Console) {
-      for (size_t index = 0; index < sizeof(rtc_camera_headless::kCocoLabels) /
-                                        sizeof(rtc_camera_headless::kCocoLabels[0]); ++index) {
-        vision_class_labels_by_id_[static_cast<uint32_t>(index)] =
-            rtc_camera_headless::kCocoLabels[index];
-      }
-      std::string error;
-      if (!local_yolo_.Start(config.yolo_model_path, config.yolo_max_fps,
-          [this](const rtc_console::LocalYoloFrame& frame,
-                 const vts_rtc::vision::FrameDetections& detections) {
-            VisionDetectionOverlayView overlay;
-            overlay.frame_detections = detections;
-            overlay.updated_at = frame.received;
-            std::lock_guard<std::mutex> lock(vision_detection_mutex_);
-            vision_detections_by_source_[frame.key] = std::move(overlay);
-          }, &error, [this](const std::string& error) {
-            AppendLog("本地 YOLO 推理失败：" + error);
-          })) {
-        AppendLog("本地 YOLO 初始化失败：" + error);
-        return false;
-      }
-      AppendLog("已启用本地 YOLO 检测（ONNX Runtime CPU）");
-    } else if (yolo_mode_ == rtc_runtime::YoloMode::Edge) {
-      AppendLog("已选择 edge YOLO 检测，等待边缘端检测结果");
-    } else {
-      AppendLog("YOLO 检测已关闭");
-    }
     device_slots_.Configure(config.device_slots);
     AppendLog(std::string("目标房间：") + options_.room_id);
     AppendLog(std::string("自动创建房间：") +
@@ -877,13 +838,12 @@ class RtcConsoleApp {
     AppendLog("RtcAddDataChannel(datachannel) success");
 
     const RtcErrorCode vision_dc_code = RtcAddDataChannel(
-        vts_rtc::vision::kVisionDetectionChannelLabel, RtcPriorityType::Medium,
+        fused::kFusedDetectionChannel, RtcPriorityType::Medium,
         false, 0);
     if (vision_dc_code != RtcErrorCode::OK) {
-      AppendLogWithCode("RtcAddDataChannel(vision.detect.v1)", vision_dc_code);
+      AppendLogWithCode("RtcAddDataChannel(perception.fused.v1)", vision_dc_code);
       return false;
     }
-    AppendLog("RtcAddDataChannel(vision.detect.v1) success");
 
     const RtcErrorCode vehicle_control_dc_code = RtcAddDataChannel(
         vts_rtc::vehicle::kVehicleControlChannelLabel, RtcPriorityType::High,
@@ -1302,7 +1262,7 @@ class RtcConsoleApp {
 
   void DrawSettings(const ImGuiViewport& viewport) {
     const int previous_category = settings_category_;
-    const char* categories[] = {"常规", "设备", "目标检测", "转向", "快捷键", "网络与 RTC"};
+    const char* categories[] = {"常规", "设备", "转向", "快捷键", "网络与 RTC"};
     ImGui::SetNextWindowPos(ImVec2(viewport.WorkPos.x + kPanelMargin,
         viewport.WorkPos.y + kPanelMargin), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(viewport.WorkSize.x - 2 * kPanelMargin,
@@ -1313,7 +1273,7 @@ class RtcConsoleApp {
     const float footer_height = ImGui::GetFrameHeightWithSpacing() + 10.0f;
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
     ImGui::BeginChild("SettingsWorkspace", ImVec2(0, -footer_height), false);
-    for (int category = 0; category < 6; ++category) {
+    for (int category = 0; category < static_cast<int>(std::size(categories)); ++category) {
       if (category > 0) ImGui::SameLine();
       if (ui::PageTab(categories[category], settings_category_ == category)) {
         settings_category_ = category;
@@ -1344,24 +1304,6 @@ class RtcConsoleApp {
       }
     }
     if (settings_category_ == 2) {
-      SettingsField("YOLO 运行位置", [&] {
-        const char* modes[] = {"Console（本机）", "Edge（边缘端）", "关闭"};
-        int selected = static_cast<int>(settings_draft_.yolo_mode);
-        if (ImGui::Combo("##yolo_mode", &selected, modes, 3)) {
-          settings_draft_.yolo_mode = static_cast<rtc_runtime::YoloMode>(selected);
-        }
-      });
-      ImGui::TextWrapped("两端 rtc.cfg 中的 YOLO 模式须保持一致，保存后重启两端应用生效。");
-      ImGui::BeginDisabled(settings_draft_.yolo_mode != rtc_runtime::YoloMode::Console);
-      SettingsField("Console 最大检测帧率", [&] {
-        ImGui::InputInt("##fps", &settings_draft_.yolo_max_fps);
-      });
-      SettingsField("Console 模型路径", [&] {
-        SettingsText("##model", &settings_draft_.yolo_model_path);
-      });
-      ImGui::EndDisabled();
-    }
-    if (settings_category_ == 3) {
       SettingsField("方向盘转角范围（度）", [&] {
         ImGui::InputDouble("##range", &settings_draft_.steering_wheel_range_deg);
       });
@@ -1381,7 +1323,7 @@ class RtcConsoleApp {
       }
       ImGui::EndDisabled();
     }
-    if (settings_category_ == 4 && ImGui::BeginTable("KeyboardBindings", 2,
+    if (settings_category_ == 3 && ImGui::BeginTable("KeyboardBindings", 2,
         ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
       ImGui::TableSetupColumn("操作", ImGuiTableColumnFlags_WidthStretch, 0.4f);
       ImGui::TableSetupColumn("绑定按键", ImGuiTableColumnFlags_WidthStretch, 0.6f);
@@ -1412,7 +1354,7 @@ class RtcConsoleApp {
       }
       ImGui::EndTable();
     }
-    if (settings_category_ == 5) {
+    if (settings_category_ == 4) {
       for (auto entry = settings_draft_.rtc_settings.begin();
            entry != settings_draft_.rtc_settings.end(); ++entry) {
         DrawRtcSetting(entry.key(), &entry.value());
@@ -3179,75 +3121,41 @@ class RtcConsoleApp {
   }
 
   bool DetectionToNormalizedRect(
-      const vts_rtc::vision::FrameDetections& frame_detections,
-      const vts_rtc::vision::Detection& detection,
+      const fused::FusedTarget& detection,
       const VideoFrameView& frame,
       NormalizedRect* rect) const {
-    if (!rect) {
+    const auto& camera = detection.camera_source_id();
+    if (camera.empty() || !std::isfinite(detection.x()) ||
+        !std::isfinite(detection.y()) || !std::isfinite(detection.width()) ||
+        !std::isfinite(detection.height())) {
       return false;
     }
-
-    float left = 0.0f;
-    float top = 0.0f;
-    float right = 0.0f;
-    float bottom = 0.0f;
-
-    if (frame_detections.coord_type ==
-        vts_rtc::vision::CoordType::NormU16Xywh) {
-      left = static_cast<float>(detection.x) / 65535.0f;
-      top = static_cast<float>(detection.y) / 65535.0f;
-      right =
-          static_cast<float>(std::min<uint64_t>(
-              static_cast<uint64_t>(detection.x) + detection.w, 65535u)) /
-          65535.0f;
-      bottom =
-          static_cast<float>(std::min<uint64_t>(
-              static_cast<uint64_t>(detection.y) + detection.h, 65535u)) /
-          65535.0f;
-    } else if (frame_detections.coord_type ==
-               vts_rtc::vision::CoordType::NormU16Xyxy) {
-      left = static_cast<float>(detection.x) / 65535.0f;
-      top = static_cast<float>(detection.y) / 65535.0f;
-      right = static_cast<float>(detection.w) / 65535.0f;
-      bottom = static_cast<float>(detection.h) / 65535.0f;
-    } else if (frame_detections.coord_type ==
-               vts_rtc::vision::CoordType::PixelI32Xywh) {
-      const float source_width = static_cast<float>(
-          frame_detections.frame_width > 0 ? frame_detections.frame_width
-                                           : frame.width);
-      const float source_height = static_cast<float>(
-          frame_detections.frame_height > 0 ? frame_detections.frame_height
-                                            : frame.height);
-      if (source_width <= 0.0f || source_height <= 0.0f) {
-        return false;
-      }
-      left = static_cast<float>(detection.x) / source_width;
-      top = static_cast<float>(detection.y) / source_height;
-      right = static_cast<float>(detection.x + detection.w) / source_width;
-      bottom = static_cast<float>(detection.y + detection.h) / source_height;
-    } else {
-      return false;
-    }
-
-    if (right < left) {
-      std::swap(left, right);
-    }
-    if (bottom < top) {
-      std::swap(top, bottom);
-    }
-
-    left = std::max(0.0f, std::min(left, 1.0f));
-    top = std::max(0.0f, std::min(top, 1.0f));
-    right = std::max(0.0f, std::min(right, 1.0f));
-    bottom = std::max(0.0f, std::min(bottom, 1.0f));
+    const float left = std::clamp(detection.x(), 0.0f, 1.0f);
+    const float top = std::clamp(detection.y(), 0.0f, 1.0f);
+    const float right = std::clamp(detection.x() + detection.width(), 0.0f, 1.0f);
+    const float bottom = std::clamp(detection.y() + detection.height(), 0.0f, 1.0f);
     if (right <= left || bottom <= top) {
       return false;
     }
-
-    rect->left = left;
-    rect->top = top;
-    rect->right = right;
-    rect->bottom = bottom;
+    float offset_x = 0.0f;
+    float offset_y = 0.0f;
+    float scale_x = 1.0f;
+    float scale_y = 1.0f;
+    if (frame.source_id == kExternalVideoSource) {
+      if (camera != "front_left" && camera != "front_right") return false;
+      scale_x = 0.5f;
+      offset_x = camera == "front_right" ? 0.5f : 0.0f;
+    } else if (frame.source_id == "surround_grid") {
+      if (camera != "front" && camera != "rear" && camera != "left" &&
+          camera != "right") return false;
+      scale_x = scale_y = 0.5f;
+      offset_x = (camera == "rear" || camera == "right") ? 0.5f : 0.0f;
+      offset_y = (camera == "left" || camera == "right") ? 0.5f : 0.0f;
+    } else if (frame.source_id != "surround_" + camera) {
+      return false;
+    }
+    *rect = {offset_x + left * scale_x, offset_y + top * scale_y,
+             offset_x + right * scale_x, offset_y + bottom * scale_y};
     return true;
   }
 
@@ -3471,45 +3379,33 @@ class RtcConsoleApp {
       return;
     }
 
-    VisionOverlaySnapshot snapshot;
+    std::shared_ptr<const fused::FusedSnapshot> snapshot;
     {
       std::lock_guard<std::mutex> lock(vision_detection_mutex_);
-      const auto it = vision_detections_by_source_.find(frame.stream_key);
-      if (it == vision_detections_by_source_.end()) {
-        return;
+      const auto it = fused_detections_.find(frame.remote_sessionid);
+      if (it != fused_detections_.end()) {
+        snapshot = it->second.Get(std::chrono::steady_clock::now());
       }
-      snapshot.overlay = it->second;
-      snapshot.class_labels_by_id = vision_class_labels_by_id_;
     }
-
-    const VisionDetectionOverlayView& overlay = snapshot.overlay;
-    const auto age = std::chrono::steady_clock::now() - overlay.updated_at;
-    if (age > std::chrono::seconds(2)) {
+    if (!snapshot) {
       return;
     }
 
     const ImU32 box_color = IM_COL32(0, 255, 102, 255);
     const ImU32 label_bg = IM_COL32(0, 0, 0, 190);
-    for (const vts_rtc::vision::Detection& detection :
-         overlay.frame_detections.detections) {
+    for (const auto& detection : snapshot->targets()) {
       NormalizedRect source_rect;
-      if (!DetectionToNormalizedRect(overlay.frame_detections, detection, frame,
-                                     &source_rect)) {
+      if (!DetectionToNormalizedRect(detection, frame, &source_rect)) {
         continue;
       }
 
       char label[64] = {0};
-      const auto label_it =
-          snapshot.class_labels_by_id.find(detection.class_id);
-      if (label_it != snapshot.class_labels_by_id.end() &&
-          !label_it->second.empty()) {
-        std::snprintf(label, sizeof(label), "%s %.1f%%",
-                      label_it->second.c_str(),
-                      static_cast<double>(detection.confidence) / 10.0);
+      if (detection.has_3d()) {
+        std::snprintf(label, sizeof(label), "cls %u  X %.1f Y %.1f m",
+                      detection.class_id(), detection.position_x(), detection.position_y());
       } else {
         std::snprintf(label, sizeof(label), "cls %u %.1f%%",
-                      detection.class_id,
-                      static_cast<double>(detection.confidence) / 10.0);
+                      detection.class_id(), detection.score() * 100.0);
       }
 
       if (interleaved_overlay) {
@@ -3971,7 +3867,6 @@ class RtcConsoleApp {
   }
 
   void ResetSessionStateOnUi() {
-    local_yolo_.Clear();
     StopMediaFeed();
     remote_audio_player_.Clear();
     CloseFullscreenVideo();
@@ -3983,10 +3878,6 @@ class RtcConsoleApp {
     {
       std::lock_guard<std::mutex> lock(video_mutex_);
       remote_video_frames_by_source_.clear();
-    }
-    {
-      std::lock_guard<std::mutex> lock(vision_detection_mutex_);
-      vision_detections_by_source_.clear();
     }
     {
       std::lock_guard<std::mutex> lock(edge_feedback_mutex_);
@@ -4297,6 +4188,10 @@ class RtcConsoleApp {
         instance_->edge_feedback_by_session_.erase(sessionid);
       }
       instance_->video_view_state_.Erase(sessionid);
+      {
+        std::lock_guard<std::mutex> lock(instance_->vision_detection_mutex_);
+        instance_->fused_detections_.erase(sessionid);
+      }
       if (instance_->vehicle_control_targets_.SetP2PConnected(sessionid,
                                                                false)) {
         instance_->RequestVehicleControlReset();
@@ -4314,6 +4209,14 @@ class RtcConsoleApp {
         << (label ? label : "") << " state=" << static_cast<int>(state);
     instance_->AppendLog(oss.str());
 
+    if (label && std::strcmp(label, fused::kFusedDetectionChannel) == 0) {
+      std::lock_guard<std::mutex> lock(instance_->vision_detection_mutex_);
+      if (state == DataChannelOpen) {
+        instance_->fused_detections_.try_emplace(sessionid);
+      } else if (state == DataChannelClosed) {
+        instance_->fused_detections_.erase(sessionid);
+      }
+    }
     if (label &&
         std::strcmp(label, vts_rtc::vehicle::kVehicleControlChannelLabel) == 0) {
       const bool open = state == RtcDataChannelState::DataChannelOpen;
@@ -4329,6 +4232,10 @@ class RtcConsoleApp {
     instance_->server_state_.store(state);
     if (state != ServerLogined) {
       instance_->auto_room_opened_.store(false);
+      {
+        std::lock_guard<std::mutex> lock(instance_->vision_detection_mutex_);
+        instance_->fused_detections_.clear();
+      }
       {
         std::lock_guard<std::mutex> lock(instance_->device_identity_mutex_);
         instance_->device_slots_.Clear();
@@ -4368,8 +4275,8 @@ class RtcConsoleApp {
       return;
     }
     if (label &&
-        std::strcmp(label, vts_rtc::vision::kVisionDetectionChannelLabel) == 0) {
-      instance_->HandleVisionDetectionMessage(remote_sessionid, msg, msg_size);
+        std::strcmp(label, fused::kFusedDetectionChannel) == 0) {
+      instance_->HandleFusedDetectionMessage(remote_sessionid, msg, msg_size);
       return;
     }
     if (label &&
@@ -4498,64 +4405,12 @@ class RtcConsoleApp {
     AppendLog(oss.str());
   }
 
-  void HandleVisionDetectionMessage(RtcSessionId remote_sessionid,
-                                    const char* msg,
-                                    size_t msg_size) {
-    if (yolo_mode_ != rtc_runtime::YoloMode::Edge) return;
-    if (!msg || msg_size == 0) {
-      return;
-    }
-
-    const vts_rtc::vision::DecodeResult decoded =
-        vts_rtc::vision::DecodeEnvelope(
-            reinterpret_cast<const uint8_t*>(msg), msg_size);
-    if (!decoded) {
-      AppendLog(std::string("Vision detection decode failed: ") +
-                decoded.error_message);
-      return;
-    }
-
-    if (decoded.envelope.type == vts_rtc::vision::MessageType::ClassMap) {
-      const vts_rtc::vision::ClassMap& class_map =
-          decoded.envelope.class_map;
-      std::map<uint32_t, std::string> labels_by_id;
-      for (const vts_rtc::vision::ClassInfo& class_info :
-           class_map.classes) {
-        if (!class_info.label.empty()) {
-          labels_by_id[class_info.class_id] = class_info.label;
-        }
-      }
-      {
-        std::lock_guard<std::mutex> lock(vision_detection_mutex_);
-        vision_class_labels_by_id_ = labels_by_id;
-      }
-      std::ostringstream oss;
-      oss << "Vision class map received: model=" << class_map.model_name
-          << " version=" << class_map.model_version
-          << " classes=" << labels_by_id.size();
-      AppendLog(oss.str());
-      return;
-    }
-
-    if (decoded.envelope.type != vts_rtc::vision::MessageType::FrameDetections) {
-      return;
-    }
-
-    const vts_rtc::vision::FrameDetections& frame_detections =
-        decoded.envelope.frame_detections;
-    if (frame_detections.source_id.empty()) {
-      return;
-    }
-
-    VisionDetectionOverlayView overlay;
-    overlay.frame_detections = frame_detections;
-    overlay.updated_at = std::chrono::steady_clock::now();
-
-    const std::string stream_key =
-        MakeVideoStreamKey(remote_sessionid, frame_detections.source_id);
-    {
-      std::lock_guard<std::mutex> lock(vision_detection_mutex_);
-      vision_detections_by_source_[stream_key] = overlay;
+  void HandleFusedDetectionMessage(RtcSessionId remote_sessionid,
+                                   const char* msg, size_t msg_size) {
+    std::lock_guard<std::mutex> lock(vision_detection_mutex_);
+    const auto entry = fused_detections_.find(remote_sessionid);
+    if (entry != fused_detections_.end()) {
+      entry->second.Update(msg, msg_size, std::chrono::steady_clock::now());
     }
   }
 
@@ -4611,18 +4466,6 @@ class RtcConsoleApp {
     view->frame_seq = instance_->remote_video_frame_seq_.fetch_add(1) + 1;
     view->buffer.assign(buffer, buffer + sz_buffer);
 
-    if (instance_->yolo_mode_ == rtc_runtime::YoloMode::Console &&
-        dimension == 4 && width <= 16384 && height <= 16384) {
-      rtc_console::LocalYoloFrame frame;
-      frame.key = view->stream_key;
-      frame.source = view->source_id;
-      frame.sequence = view->frame_seq;
-      frame.width = static_cast<int>(width);
-      frame.height = static_cast<int>(height);
-      frame.pixels = view->buffer;
-      frame.received = std::chrono::steady_clock::now();
-      instance_->local_yolo_.Submit(std::move(frame));
-    }
     if (instance_->options_.no_render) return;
 
     {
@@ -4758,10 +4601,7 @@ class RtcConsoleApp {
                                        std::ios::app};
   bool video_render_log_error_reported_ = false;
   std::mutex vision_detection_mutex_;
-  rtc_console::LocalYolo local_yolo_;
-  rtc_runtime::YoloMode yolo_mode_ = rtc_runtime::YoloMode::Disabled;
-  std::map<std::string, VisionDetectionOverlayView> vision_detections_by_source_;
-  std::map<uint32_t, std::string> vision_class_labels_by_id_;
+  std::map<RtcSessionId, rtc_console::FusedDetectionView> fused_detections_;
   std::mutex edge_feedback_mutex_;
   std::map<uint32_t, EdgeFeedbackView> edge_feedback_by_session_;
   bool render_lr_pixel_interleave_ = false;

@@ -66,20 +66,6 @@ void TestNoRenderAndRoom() {
 void TestConfig() {
   const std::string path = "rtc_console_options_test_config.json";
 
-  WriteConfig(path, "{\"console\":{\"yolo\":{\"enabled\":false,\"max_fps\":12,\"model\":\"models/test.onnx\"}}}");
-  const auto yolo_config = rtc_console::LoadConfig(path);
-  Check(yolo_config.yolo_mode == rtc_runtime::YoloMode::Edge && yolo_config.yolo_max_fps == 12 &&
-        yolo_config.yolo_model_path == "models/test.onnx", "load console YOLO config");
-  for (const auto& yolo : {"[]", "{\"enabled\":1}", "{\"max_fps\":0}",
-                          "{\"max_fps\":241}", "{\"max_fps\":1.5}",
-                          "{\"model\":null}"}) {
-    WriteConfig(path, std::string("{\"console\":{\"yolo\":") + yolo + "}}");
-    bool rejected = false;
-    try { rtc_console::LoadConfig(path); }
-    catch (const std::runtime_error&) { rejected = true; }
-    Check(rejected, "reject invalid console YOLO config");
-  }
-
   WriteConfig(path,
               "{\"console\":{\"room\":\"configured-room\","
               "\"auto_open_room\":true}}");
@@ -259,9 +245,6 @@ void TestSaveConfig() {
   WriteConfig(path, "{\"api_server\":\"old:9090\",\"edge\":{\"config\":\"missing.json\"},\"console\":{\"custom\":17}}");
   auto config = rtc_console::LoadConfig(path);
   config.room_id = "saved-room";
-  config.yolo_mode = rtc_runtime::YoloMode::Edge;
-  config.yolo_max_fps = 24;
-  config.yolo_model_path = "models/custom.onnx";
   config.auto_open_room = true;
   config.steering_servo_calibrated = true;
   config.steering_servo_left_deg = 60;
@@ -273,8 +256,7 @@ void TestSaveConfig() {
   const auto saved = rtc_console::LoadConfig(path);
   Check(saved.room_id == "saved-room" && saved.auto_open_room &&
     saved.key_bindings.at("takeover").size() == 2 &&
-    saved.steering_servo_calibrated && saved.yolo_max_fps == 24 &&
-    saved.yolo_mode == rtc_runtime::YoloMode::Edge && saved.yolo_model_path == config.yolo_model_path,
+    saved.steering_servo_calibrated,
     "round trip all console settings");
   nlohmann::json root;
   { std::ifstream input(path); input >> root; }
@@ -328,78 +310,6 @@ void TestInvalidArguments() {
   Check(unknown_rejected, "reject unknown argument");
 }
 
-void TestYoloModes() {
-  using rtc_runtime::YoloMode;
-  const std::string path = "rtc_console_yolo_modes_test.json";
-  const std::string external = "rtc_console_yolo_modes_external.json";
-  WriteConfig(path, "{}");
-  Check(rtc_console::LoadConfig(path).yolo_mode == YoloMode::Console,
-        "default to console inference");
-  for (const auto mode : {YoloMode::Console, YoloMode::Edge, YoloMode::Disabled}) {
-    for (bool enabled : {false, true}) {
-      nlohmann::json root = {
-          {"yolo", {{"mode", rtc_runtime::YoloModeName(mode)}}},
-          {"console", {{"yolo", {{"enabled", enabled}}}}}};
-      WriteConfig(path, root.dump());
-      Check(rtc_console::LoadConfig(path).yolo_mode == mode,
-            "shared mode overrides legacy console switch");
-      root.erase("console");
-      WriteConfig(path, root.dump());
-      Check(rtc_console::LoadConfig(path).yolo_mode == mode,
-            "shared mode applies without console section");
-    }
-    for (bool use_external : {false, true}) {
-      nlohmann::json section = {{"yolo", {{"enabled", true}, {"custom", 42}}}};
-      WriteConfig(external, section.dump());
-      nlohmann::json root = {
-          {"yolo", {{"mode", "console"}, {"custom", 17}}},
-          {"edge", {{"config", "missing-edge.json"}}},
-          {"console", use_external ? nlohmann::json{{"config", external}} : section}};
-      WriteConfig(path, root.dump());
-      auto config = rtc_console::LoadConfig(path);
-      Check(!config.rtc_settings.contains("yolo"), "mode has a single settings entry");
-      config.yolo_mode = mode;
-      rtc_console::SaveConfig(path, config);
-      Check(rtc_console::LoadConfig(path).yolo_mode == mode,
-            "round trip every YOLO mode with inline and external settings");
-      { std::ifstream input(path); input >> root; }
-      Check(root["yolo"]["mode"] == rtc_runtime::YoloModeName(mode) &&
-            root["yolo"]["custom"] == 17 && root["edge"]["config"] == "missing-edge.json",
-            "persist shared mode and preserve unrelated settings without reading edge file");
-      if (use_external) {
-        Check(root["console"]["config"] == external, "preserve console reference");
-        std::ifstream input(external);
-        input >> section;
-      } else {
-        section = root["console"];
-      }
-      Check(!section["yolo"].contains("enabled") && section["yolo"]["custom"] == 42,
-            "remove superseded console switch without losing custom fields");
-    }
-  }
-  for (const auto& invalid : {"null", "[]", "{}", "{\"mode\":null}",
-                              "{\"mode\":true}", "{\"mode\":1}",
-                              "{\"mode\":\"\"}", "{\"mode\":\"auto\"}"}) {
-    WriteConfig(path, std::string("{\"yolo\":") + invalid + "}");
-    bool rejected = false;
-    try { rtc_console::LoadConfig(path); }
-    catch (const std::runtime_error& error) {
-      rejected = std::string(error.what()).find("yolo.mode") != std::string::npos;
-    }
-    Check(rejected, "reject malformed or unknown shared YOLO mode");
-  }
-  WriteConfig(path, "{}");
-  auto invalid_config = rtc_console::LoadConfig(path);
-  invalid_config.yolo_mode = static_cast<YoloMode>(99);
-  bool rejected = false;
-  try { rtc_console::SaveConfig(path, invalid_config); }
-  catch (const std::runtime_error&) { rejected = true; }
-  Check(rejected && rtc_console::LoadConfig(path).yolo_mode == YoloMode::Console,
-        "invalid mode cannot overwrite settings");
-  std::remove(path.c_str());
-  std::remove(external.c_str());
-}
-
 }
 
 int main(int argc, char** argv) {
@@ -423,7 +333,6 @@ int main(int argc, char** argv) {
   TestExternalConfig();
   TestDeviceSlots();
   TestSaveConfig();
-  TestYoloModes();
   std::cout << "rtc_console options tests passed" << std::endl;
   return 0;
 }
