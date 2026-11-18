@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
+#include <map>
 #include <mutex>
 #include <map>
 #include <stdexcept>
@@ -48,9 +49,10 @@ class FusedDetectionPublisher {
     node_ = std::make_shared<rclcpp::Node>(
         "rtc_fused_detection", rclcpp::NodeOptions().context(context));
     subscription_ = node_->create_subscription<dozer_msgs::msg::FusedDetectionArray>(
-        "/perception/fused_detections", rclcpp::SensorDataQoS().keep_last(1),
+        "/perception/fused_detections", rclcpp::SensorDataQoS().keep_last(32),
         [this](dozer_msgs::msg::FusedDetectionArray::ConstSharedPtr message) {
-          latest_ = std::move(message);
+          const auto source = message->source_id;
+          latest_by_source_[source] = std::move(message);
         });
     rclcpp::ExecutorOptions options;
     options.context = context;
@@ -73,9 +75,10 @@ class FusedDetectionPublisher {
   }
 
   void Tick(bool ready) {
-    executor_->spin_some();
-    auto message = std::move(latest_);
-    if (!message || !ready) return;
+    executor_->spin_all(std::chrono::milliseconds(2));
+    decltype(latest_by_source_) latest;
+    latest.swap(latest_by_source_);
+    if (latest.empty() || !ready) return;
     std::unordered_set<RtcSessionId> peers;
     {
       std::lock_guard<std::mutex> lock(mutex_);
@@ -83,16 +86,24 @@ class FusedDetectionPublisher {
     }
     if (peers.empty()) return;
 
+    for (const auto& entry : latest) {
+      Send(*entry.second, peers);
+    }
+  }
+
+ private:
+  void Send(const dozer_msgs::msg::FusedDetectionArray& message,
+            const std::unordered_set<RtcSessionId>& peers) {
     fused::FusedSnapshot snapshot;
     snapshot.set_sequence(++sequence_);
-    snapshot.set_capture_time_ns(static_cast<int64_t>(message->header.stamp.sec) *
-                                1000000000LL + message->header.stamp.nanosec);
-    snapshot.set_frame_id(message->header.frame_id);
-    snapshot.set_source_id(message->source_id);
-    snapshot.set_frame_seq(message->frame_seq);
-    snapshot.set_image_width(message->image_width);
-    snapshot.set_image_height(message->image_height);
-    for (const auto& detection : message->detections) {
+    snapshot.set_capture_time_ns(static_cast<int64_t>(message.header.stamp.sec) *
+                                1000000000LL + message.header.stamp.nanosec);
+    snapshot.set_frame_id(message.header.frame_id);
+    snapshot.set_source_id(message.source_id);
+    snapshot.set_frame_seq(message.frame_seq);
+    snapshot.set_image_width(message.image_width);
+    snapshot.set_image_height(message.image_height);
+    for (const auto& detection : message.detections) {
       auto* target = snapshot.add_targets();
       target->set_class_id(detection.class_id);
       target->set_score(detection.score);
@@ -131,11 +142,10 @@ class FusedDetectionPublisher {
     }
   }
 
- private:
   rclcpp::Node::SharedPtr node_;
   rclcpp::Subscription<dozer_msgs::msg::FusedDetectionArray>::SharedPtr subscription_;
   std::unique_ptr<rclcpp::executors::SingleThreadedExecutor> executor_;
-  dozer_msgs::msg::FusedDetectionArray::ConstSharedPtr latest_;
+  std::map<std::string, dozer_msgs::msg::FusedDetectionArray::ConstSharedPtr> latest_by_source_;
   std::mutex mutex_;
   std::unordered_set<RtcSessionId> peers_;
   uint64_t sequence_ = 0;

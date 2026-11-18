@@ -52,4 +52,27 @@ int main() {
         view.Get(now + 600ms)->targets().empty(), "new empty snapshot clears targets");
   view = FusedDetectionView{};
   Check(!view.Get(now) && view.Update(bytes.data(), bytes.size(), now), "new channel resets sequence");
+
+    const auto update = [&](uint64_t sequence, const char* source, const char* camera,
+            FusedDetectionView::Clock::time_point time) {
+      FusedDetectionView::Snapshot message;
+      message.set_sequence(sequence);
+      message.set_source_id(source);
+      if (camera) message.add_targets()->set_camera_source_id(camera);
+      const auto payload = message.SerializeAsString();
+      return view.Update(payload.data(), payload.size(), time);
+    };
+    Check(update(10, "camera:front_right", "front_right", now), "accept right update");
+    Check(update(9, "camera:front_left", "front_left", now + 50ms), "order independently by camera");
+    Check(view.GetOverlays(now + 50ms).size() == 2, "retain left and right after alternating updates");
+    Check(!update(8, "camera:front_left", nullptr, now + 60ms), "reject older same-camera clear");
+    Check(update(11, "radar_fusion", nullptr, now + 100ms), "accept periodic radar snapshot");
+    Check(view.GetOverlays(now + 100ms).size() == 2, "periodic snapshot does not clear camera views");
+    Check(update(12, "camera:front_left", nullptr, now + 200ms), "accept empty left update");
+    const auto overlays = view.GetOverlays(now + 200ms);
+    Check(overlays.size() == 2 && overlays[0]->targets().empty() &&
+      overlays[1]->targets_size() == 1, "empty left update clears only left");
+    const auto fresh = view.GetOverlays(now + 501ms);
+    Check(fresh.size() == 1 && fresh.front()->source_id() == "camera:front_left",
+      "right expires independently even with newer radar and left updates");
 }

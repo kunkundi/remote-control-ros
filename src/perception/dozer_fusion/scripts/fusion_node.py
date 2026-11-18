@@ -139,7 +139,7 @@ class FusionNode(Node):
                 if abs(seconds(closest.header.stamp) - target_time) <= self.max_age:
                     active.append(closest)
         self.publish_fused(active, {name: msg}, msg.header.stamp, msg.frame_seq,
-                           trigger='image')
+                           trigger='image', source_id=f'camera:{name}')
 
     def lookup(self, target, source, stamp):
         try:
@@ -158,12 +158,13 @@ class FusionNode(Node):
         stamp = max(active, key=lambda msg: seconds(msg.header.stamp)).header.stamp
         self.publish_fused(active, self.detections, stamp)
 
-    def publish_fused(self, active, detections, stamp, frame_seq=0, trigger='periodic'):
+    def publish_fused(self, active, detections, stamp, frame_seq=0, trigger='periodic',
+                      source_id='radar_fusion'):
         started = time.perf_counter()
         output = FusedDetectionArray()
         output.header.stamp = stamp
         output.header.frame_id = self.frame
-        output.source_id = 'radar_fusion'
+        output.source_id = source_id
         output.frame_seq = frame_seq
         entries = []
         for radar in active:
@@ -208,7 +209,7 @@ class FusionNode(Node):
                 fused.score = box.score
                 fused.x, fused.y, fused.w, fused.h = box.x, box.y, box.w, box.h
                 fused.has_track_id, fused.track_id = box.has_track_id, box.track_id
-                fused.camera_source_id = detection_msg.source_id
+                fused.camera_source_id = name
             matched_boxes = {id(box) for box in associations.values()}
             for box in detection_msg.detections:
                 if id(box) in matched_boxes:
@@ -219,7 +220,7 @@ class FusionNode(Node):
                 camera_only.x, camera_only.y, camera_only.w, camera_only.h = (
                     box.x, box.y, box.w, box.h)
                 camera_only.has_track_id, camera_only.track_id = box.has_track_id, box.track_id
-                camera_only.camera_source_id = detection_msg.source_id
+                camera_only.camera_source_id = name
                 camera_only.has_3d = False
                 output.detections.append(camera_only)
         output.detections = [entry[2] for entry in entries] + list(output.detections)

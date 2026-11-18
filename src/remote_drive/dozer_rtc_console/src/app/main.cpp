@@ -3379,21 +3379,28 @@ class RtcConsoleApp {
       return;
     }
 
-    std::shared_ptr<const fused::FusedSnapshot> snapshot;
+    std::vector<std::shared_ptr<const fused::FusedSnapshot>> overlays;
     {
       std::lock_guard<std::mutex> lock(vision_detection_mutex_);
       const auto it = fused_detections_.find(frame.remote_sessionid);
       if (it != fused_detections_.end()) {
-        snapshot = it->second.Get(std::chrono::steady_clock::now());
+        overlays = it->second.GetOverlays(std::chrono::steady_clock::now());
       }
     }
-    if (!snapshot) {
-      return;
+    for (const auto& snapshot : overlays) {
+      DrawFusedSnapshotOverlay(*snapshot, frame, image_min, image_max, draw_list,
+                               interleaved_overlay, source_crop);
     }
+  }
 
+  void DrawFusedSnapshotOverlay(const fused::FusedSnapshot& snapshot,
+                                const VideoFrameView& frame,
+                                const ImVec2& image_min, const ImVec2& image_max,
+                                ImDrawList* draw_list, bool interleaved_overlay,
+                                const NormalizedRect& source_crop) {
     const ImU32 box_color = IM_COL32(0, 255, 102, 255);
     const ImU32 label_bg = IM_COL32(0, 0, 0, 190);
-    for (const auto& detection : snapshot->targets()) {
+    for (const auto& detection : snapshot.targets()) {
       NormalizedRect source_rect;
       if (!DetectionToNormalizedRect(detection, frame, &source_rect)) {
         continue;

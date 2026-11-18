@@ -98,7 +98,7 @@ ros2 run dozer_rtc_edge rtc_edge --config "$PWD/src/system/dozer_bringup/config/
 
 保留会话、视频源、音频、视图切换、控制协议和 300 ms 看门狗。车辆控制默认 debug 模式，不会替代 `dozer_vehicle`，也尚未接入 `/vehicle/*`。禁止在未实现并审查车辆适配前用于真实车辆执行。
 
-本地 YOLO 已从 edge 和 console 移除。`dozer_perception` 仍负责视觉检测，`dozer_fusion` 在 `/perception/fused_detections` 发布 `dozer_msgs/msg/FusedDetectionArray`。edge 只保留最新待发快照，在打开的 `perception.fused.v1` DataChannel 上按设备发送；通道无序、不重传，单包上限为 16 KiB，超限丢弃整包，不影响车辆控制协议。
+本地 YOLO 已从 edge 和 console 移除。`dozer_perception` 仍负责视觉检测，`dozer_fusion` 在 `/perception/fused_detections` 发布 `dozer_msgs/msg/FusedDetectionArray`。edge 按 `source_id` 保留每路最新待发快照，在打开的 `perception.fused.v1` DataChannel 上按设备发送；通道无序、不重传，单包上限为 16 KiB，超限丢弃整包，不影响车辆控制协议。
 
 两端构建均需要 `libprotobuf-dev` 和 `protobuf-compiler`，通过同一个 `src/remote_drive/protocols/fused_detection.proto` 生成 C++ 类型。该通道使用独立序号丢弃乱序包，同时保留 ROS 原始时间戳、`frame_seq`、坐标系和全部目标字段。升级时需同步部署 edge 和 console；车辆控制仍使用原 nanopb 协议。
 
