@@ -1,6 +1,6 @@
 build/
 install/
-log/
+/log/
 *.pyc
 __pycache__/
 *.mcap
@@ -12,3 +12,5 @@ bags/
 src/perception/dozer_perception/model/*
 !src/perception/dozer_perception/model/README.md
 !src/perception/dozer_perception/model/best_int8_batch6.engine
+!src/perception/dozer_perception/model/best_int8.engine
+!src/perception/dozer_perception/model/best.pt

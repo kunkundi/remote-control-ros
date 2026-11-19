@@ -9,7 +9,6 @@ application subscribes to captured audio and owns RTC transport and playback.
 
 ```text
 dozer_audio/
-|-- cmake/sdl3.cmake
 |-- include/rtc_audio/audio_device.h
 |-- src/audio_device.cpp
 |-- src/audio_capture_node.h
@@ -26,10 +25,7 @@ Capture and playback share device discovery and SDL audio subsystem management.
 
 ## Build And Test
 
-SDL3 must provide its CMake package. A system installation or `SDL3_DIR` can be
-used; the existing `$HOME/.xmake/packages` cache is also searched for SDL3.
-Override that cache with `DOZER_AUDIO_DEPENDENCY_CACHE` when necessary. No xmake
-command is run.
+The workspace package `dozer_media_vendor` supplies SDL3 and its CMake targets.
 
 ```bash
 source /opt/ros/humble/setup.bash

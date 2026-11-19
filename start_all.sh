@@ -290,7 +290,7 @@ build_packages=(dozer_audio dozer_bringup dozer_rtc_edge)
 if [[ "$edge_only" == false ]]; then
   build_packages+=(dozer_radar_sr73f dozer_perception dozer_fusion)
 fi
-build_command=(colcon build --symlink-install --packages-up-to "${build_packages[@]}"
+build_command=(colcon build --executor sequential --symlink-install --packages-up-to "${build_packages[@]}"
   --cmake-args -DCMAKE_BUILD_TYPE=Release)
 
 if [[ "$dry_run" == true ]]; then
@@ -312,14 +312,9 @@ if [[ ! -f /opt/ros/humble/setup.bash ]]; then
 fi
 if [[ "$edge_only" == false ]]; then
   gpu_python="$workspace/.venv-gpu/bin/python"
-  model="$workspace/src/perception/dozer_perception/model/best_int8_batch6.engine"
   cudnn_lib="$workspace/.venv-gpu/lib/python3.10/site-packages/nvidia/cudnn/lib"
   if [[ ! -x "$gpu_python" ]]; then
     printf 'Missing GPU Python environment. Run ./setup_gpu_inference.sh.\n' >&2
-    exit 1
-  fi
-  if [[ ! -f "$model" ]]; then
-    printf 'Missing INT8 TensorRT engine: %s\n' "$model" >&2
     exit 1
   fi
   if [[ -d "$cudnn_lib" ]]; then
@@ -336,7 +331,7 @@ source /opt/ros/humble/setup.bash
 set -u
 cd "$workspace"
 if [[ "$build" == true ]]; then
-  "${build_command[@]}"
+  MAKEFLAGS="${MAKEFLAGS:--j1}" CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-1}" "${build_command[@]}"
 fi
 if [[ ! -f "$workspace/install/setup.bash" ]]; then
   printf 'Workspace installation missing. Run without --no-build first.\n' >&2
@@ -346,6 +341,11 @@ set +u
 source "$workspace/install/setup.bash"
 set -u
 if [[ "$edge_only" == false ]]; then
+  model="$(ros2 pkg prefix --share dozer_perception)/model/best_int8_batch6.engine"
+  if [[ ! -f "$model" ]]; then
+    printf 'Missing INT8 TensorRT engine: %s\n' "$model" >&2
+    exit 1
+  fi
   export PATH="$workspace/.venv-gpu/bin:$PATH"
 fi
 

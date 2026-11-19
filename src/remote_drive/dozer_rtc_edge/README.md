@@ -41,7 +41,7 @@ dozer_rtc_edge/
 
 ## 相机直采与共享内存
 
-默认由 edge 独占 `/dev/video0` 至 `/dev/video5`，依次为前左、前右、前、后、左、右；这是沿用的配置映射，物理方向仍需核对。不要同时启动 `dozer_camera_gmsl` 或其他采集程序。复用外部 `rtc-framework` 的 V4L2 异步采集和单目 CUDA 转换实现，接受 YUYV/UYVY/NV12，采集请求为 1920x1080，转换为 I420 后用 libyuv 缩至每路 640x360。目标为设备的 30 FPS，不补帧，不承诺处理或 console 接收达到 30 FPS。
+默认由 edge 独占 `/dev/video0` 至 `/dev/video5`，依次为前左、前右、前、后、左、右；这是沿用的配置映射，物理方向仍需核对。不要同时启动 `dozer_camera_gmsl` 或其他采集程序。复用仓库内 `vendor/rtc-framework` 的 V4L2 异步采集和单目 CUDA 转换实现，接受 YUYV/UYVY/NV12，采集请求为 1920x1080，转换为 I420 后用 libyuv 缩至每路 640x360。目标为设备的 30 FPS，不补帧，不承诺处理或 console 接收达到 30 FPS。
 
 采集/转换线程与 RTC 发送线程分离：没有 console、没有选择视图时仍持续采集。双目直接拼接 I420 平面为 1280x360，配对容差 30 ms，旧帧丢弃；环视网格为 640x360。默认视频热路径没有 ROS 图像序列化，也没有 BGR 往返转换；YOLO/预览按需在消费端把 I420 转成 BGR。仍有转换、缩放与共享内存快照拷贝，不是 DMA-BUF 或端到端零拷贝。
 
@@ -60,11 +60,11 @@ colcon test --packages-select dozer_audio dozer_rtc_edge --event-handlers consol
 colcon test-result --verbose
 ```
 
-需要工作空间内的 `dozer_audio`，以及 nanopb 0.4.9、libyuv、OpenCV、nlohmann_json、Asio、OpenSSL 和外部 vtsrtc C ABI SDK。SDL3 由 `dozer_audio` 查找和导出，其可选缓存路径由 `DOZER_AUDIO_DEPENDENCY_CACHE` 控制。默认 SDK 位于 `~/workspace/rtc-framework/install`，可通过 `RTC_FRAMEWORK_INSTALL` 覆盖；可选 rosbridge 转发器还使用 `SIMPLE_WS_INCLUDE_DIR` 指定的 Simple-WebSocket-Server 头文件。系统依赖优先按 CMake 搜索规则查找；本机已安装的 xmake 包缓存仅作为搜索提示，可用 `RTC_DEPENDENCY_CACHE` 覆盖其他依赖的缓存路径，也可通过 `CMAKE_PREFIX_PATH` 指定其他安装位置。第三方库和 SDK 不复制进仓库。
+本包使用工作空间的 `dozer_rtc_sdk` 编译和安装 vtsrtc，通过 `dozer_media_vendor` 取得 Asio、JSON、nanopb 和 libyuv。OpenCV、OpenSSL 与 CUDA Toolkit 由系统提供。
 
 ## 运行
 
-直采还需要 CUDA Toolkit/nvcc，以及 `RTC_FRAMEWORK_ROOT/client/modules/camera/src` 下的上游采集和 CUDA 源码（直接编译，不复制到本仓库）。默认 CUDA 架构为 Orin 的 87，可用 `-DCMAKE_CUDA_ARCHITECTURES=...` 覆盖；找不到 nvcc 时指定 `-DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc`。
+直采使用仓库内 `vendor/rtc-framework/client/modules/camera/src` 的 V4L2 和 CUDA 实现。默认 CUDA 架构为 Orin 的 87，可用 `-DCMAKE_CUDA_ARCHITECTURES=...` 覆盖；找不到 nvcc 时指定 `-DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc`。
 
 先确认没有其他进程占用相机。启用音频输入时，另一个终端启动 `ros2 launch dozer_bringup audio.launch.py`，或使用根目录 `./start_edge.sh`。确认集中配置的信令地址及 ICE 配置适用于当前部署。单独启动 edge：
 

@@ -8,7 +8,8 @@ find_package(ament_cmake REQUIRED)
 find_package(Threads REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(dozer_msgs REQUIRED)
-include(cmake/sdl3.cmake)
+find_package(dozer_media_vendor REQUIRED)
+find_package(SDL3 CONFIG REQUIRED)
 
 add_library(dozer_audio STATIC src/audio_device.cpp)
 target_include_directories(dozer_audio PUBLIC
@@ -27,7 +28,7 @@ install(TARGETS dozer_audio EXPORT export_dozer_audio
   RUNTIME DESTINATION bin)
 install(DIRECTORY include/ DESTINATION include)
 ament_export_targets(export_dozer_audio HAS_LIBRARY_TARGET)
-ament_export_dependencies(SDL3 Threads)
+ament_export_dependencies(dozer_media_vendor SDL3 Threads)
 
 if(BUILD_TESTING)
   enable_testing()
@@ -48,4 +49,4 @@ if(BUILD_TESTING)
     ENVIRONMENT "SDL_AUDIODRIVER=dummy")
 endif()
 
-ament_package(CONFIG_EXTRAS cmake/sdl3.cmake)
+ament_package()

@@ -1,0 +1,651 @@
+#include "c_rtc.h"
+#include "rtc.h"
+#include <iostream>
+#include <limits>
+#include <atomic>
+
+#define CHECK_RTCAGENT_INITED if (!rtc_agent) { return RtcErrorCode::AgentNotInited; }
+
+std::shared_ptr<vts_rtc::RtcAgent> rtc_agent = nullptr;
+static RtcInitParams gst_params;
+static std::atomic<VideoDelayStatsHandlerV1> video_delay_handler{nullptr};
+
+void RtcSetVideoDelayStatsHandlerV1(VideoDelayStatsHandlerV1 handler) {
+	video_delay_handler.store(handler);
+}
+
+static void ReportVideoDelay(RtcSessionId session_id,
+                            const vts_rtc::NetStats& stats) {
+	const auto handler = video_delay_handler.load();
+	if (!handler || !stats.input || stats.video_stats.sourceid.empty()) {
+		return;
+	}
+	const auto& video = stats.video_stats;
+	RtcVideoDelayStatsV1 delay{sizeof(RtcVideoDelayStatsV1),
+		video.network_delay_ms, video.buffer_delay_ms,
+		video.decode_delay_ms, video.estimated_delay_ms};
+	handler(session_id, video.sourceid.c_str(), &delay);
+}
+
+std::map<RtcErrorCode, const char*> rtcerrorcode_map = {
+	{ RtcErrorCode::OK, "OK" },
+	{ RtcErrorCode::InternalError, "Internal error" },
+	{ RtcErrorCode::RoomNotExisted, "Room not existed" },
+	{ RtcErrorCode::RoomAlreadyExisted, "Room already existed" },
+	{ RtcErrorCode::AgentAlreadyInRoom, "Agent already in room" },
+	{ RtcErrorCode::AgentNotLogined, "Agent not logined" },
+	{ RtcErrorCode::AgentNotInited, "Agent not initialized" },
+	{ RtcErrorCode::Failed, "Failed" },
+};
+
+RtcErrorCode ConvertCode(vts_rtc::ErrorCode roomcode) {
+	return static_cast<RtcErrorCode>(roomcode);
+}
+
+RtcErrorCode RtcInitAgent(const char* config_filepath,
+	RoomHandler room_handler,
+	P2PStateHandler P2P_state_handler,
+	DataChannelStateHandler datachannel_state_handler,
+	ServerConnectionStateHandler serverconnection_state_handler,
+	RecvMessageHandler recv_msg_handler,
+	RecvAudioFrameHandler recv_audioframe_handler,
+	RecvFrameHandler recv_frame_handler) {
+	RtcDestoryAgent();
+
+	vts_rtc::RoomHandler inner_room_handler = nullptr;
+	if (room_handler) {
+		inner_room_handler = [room_handler](
+			vts_rtc::RoomOperation room_operation, const vts_rtc::RoomId& roomid) {
+			room_handler(static_cast<RtcRoomOperation>(room_operation),
+				const_cast<char*>(roomid.c_str()));
+		};
+	}
+
+	vts_rtc::P2PStateHandler inner_P2P_state_handler = nullptr;
+	if (P2P_state_handler) {
+		inner_P2P_state_handler = [P2P_state_handler](
+			vts_rtc::SessionId sessionid, vts_rtc::P2PState p2p_state) {
+			P2P_state_handler(sessionid, static_cast<RtcP2PState>(p2p_state));
+		};
+	}
+
+	vts_rtc::DataChannelStateHandler inner_datachannel_state_handler = nullptr;
+	if (datachannel_state_handler) {
+		inner_datachannel_state_handler = [datachannel_state_handler](
+			vts_rtc::SessionId sessionid, const std::string& label, vts_rtc::DataChannelState state) {
+				datachannel_state_handler(sessionid, label.c_str(),
+					static_cast<RtcDataChannelState>(state));
+		};
+	}
+
+	vts_rtc::ServerConnectionStateHandler inner_serverconnection_state_handler = nullptr;
+	if (serverconnection_state_handler) {
+		inner_serverconnection_state_handler = [serverconnection_state_handler](
+			vts_rtc::ServerConnectionState state) {
+			serverconnection_state_handler(static_cast<RtcServerConnectionState>(state));
+		};
+	}
+
+	vts_rtc::RecvMessageHandler msg_handler = nullptr;
+	if (recv_msg_handler) {
+		msg_handler = [recv_msg_handler](vts_rtc::SessionId sessionid,
+			const std::string& channel_label, const std::string& msg) {
+			recv_msg_handler(sessionid, channel_label.c_str(), msg.c_str(), msg.size());
+		};
+	}
+
+	vts_rtc::RecvAudioFrameHandler audioframe_handler = nullptr;
+	if (recv_audioframe_handler) {
+		audioframe_handler = [recv_audioframe_handler](
+			const vts_rtc::SessionId session_id,
+			const vts_rtc::AudioSourceId& audio_sourceid,
+			vts_rtc::MediaSourceType audio_sourcetype,
+			size_t bits_per_sample,
+			size_t sample_rate,
+			size_t number_of_channels,
+			size_t number_of_frames,
+			const void* audio_data) {
+			size_t audio_data_size = bits_per_sample * number_of_channels *
+				number_of_frames / 8;
+			recv_audioframe_handler(session_id,
+				audio_sourceid.c_str(),
+				static_cast<RtcMediaSourceType>(audio_sourcetype),
+				bits_per_sample, sample_rate, number_of_channels,
+				number_of_frames, audio_data, audio_data_size);
+		};
+	}
+
+	vts_rtc::RecvFrameHandler frame_handler = nullptr;
+	if (recv_frame_handler) {
+		frame_handler = [recv_frame_handler](
+			const vts_rtc::SessionId session_id,
+			const vts_rtc::VideoSourceId& video_sourceid,
+			vts_rtc::MediaSourceType video_sourcetype,
+			size_t width,
+			size_t height,
+			size_t dimension,
+			const std::vector<unsigned char>& framebuffer) {
+			recv_frame_handler(session_id,
+				video_sourceid.c_str(),
+				static_cast<RtcMediaSourceType>(video_sourcetype),
+				width, height, dimension, framebuffer.data(),
+				framebuffer.size());
+		};
+	}
+
+	vts_rtc::ChannelNetworkStatsHandler channel_network_stats_handler = nullptr;
+	if (gst_params.channel_network_stats_handler) {
+		channel_network_stats_handler = [](
+			const vts_rtc::SessionId session_id, 
+			const vts_rtc::NetStats& net_stats) {
+			RtcNetStats rtc_net_stats;
+			rtc_net_stats.input = net_stats.input;
+
+			rtc_net_stats.audio_stats.sourceid = net_stats.audio_stats.sourceid.c_str();
+			rtc_net_stats.audio_stats.bitrate_bps = net_stats.audio_stats.bitrate_bps;
+
+			rtc_net_stats.video_stats.sourceid = net_stats.video_stats.sourceid.c_str();
+			rtc_net_stats.video_stats.width = net_stats.video_stats.width;
+			rtc_net_stats.video_stats.height = net_stats.video_stats.height;
+			rtc_net_stats.video_stats.bitrate_bps = net_stats.video_stats.bitrate_bps;
+			rtc_net_stats.video_stats.fps = net_stats.video_stats.fps;
+			rtc_net_stats.video_stats.loss_rate = net_stats.video_stats.loss_rate;
+			rtc_net_stats.video_stats.delay_ms = net_stats.video_stats.delay_ms;
+			rtc_net_stats.video_stats.key_frame_count = net_stats.video_stats.key_frame_count;
+			rtc_net_stats.video_stats.fir_count = net_stats.video_stats.fir_count;
+			rtc_net_stats.video_stats.pli_count = net_stats.video_stats.pli_count;
+			rtc_net_stats.video_stats.nack_count = net_stats.video_stats.nack_count;
+			rtc_net_stats.video_stats.codec_name = net_stats.video_stats.codec_name.c_str();
+
+			gst_params.channel_network_stats_handler(session_id, rtc_net_stats);
+			ReportVideoDelay(session_id, net_stats);
+		};
+	}
+
+	rtc_agent = vts_rtc::RtcAgent::Create(
+		std::string(config_filepath),
+		inner_room_handler,
+		nullptr,
+		inner_P2P_state_handler,
+		inner_datachannel_state_handler,
+		inner_serverconnection_state_handler,
+		nullptr,
+		nullptr,
+		msg_handler,
+		audioframe_handler,
+		frame_handler,
+		channel_network_stats_handler);
+
+	return rtc_agent ? RtcErrorCode::OK : RtcErrorCode::Failed;
+}
+
+RtcErrorCode RtcInitAgentV2(RtcInitParams& st_params) {
+	RtcDestoryAgent();
+
+	gst_params.config_filepath = st_params.config_filepath;
+	gst_params.room_handler = st_params.room_handler;
+	gst_params.P2P_state_handler = st_params.P2P_state_handler;
+	gst_params.datachannel_state_handler = st_params.datachannel_state_handler;
+	gst_params.serverconnection_state_handler = st_params.serverconnection_state_handler;
+	gst_params.SRS_state_handler = st_params.SRS_state_handler;
+	gst_params.SRS_response_handler = st_params.SRS_response_handler;
+	gst_params.recv_msg_handler = st_params.recv_msg_handler;
+	gst_params.recv_audioframe_handler = st_params.recv_audioframe_handler;
+	gst_params.recv_frame_handler = st_params.recv_frame_handler;
+	gst_params.channel_network_stats_handler = st_params.channel_network_stats_handler;
+
+	vts_rtc::RoomHandler inner_room_handler = nullptr;
+	if (gst_params.room_handler) {
+		inner_room_handler = [](
+			vts_rtc::RoomOperation room_operation, const vts_rtc::RoomId& roomid) {
+			gst_params.room_handler(static_cast<RtcRoomOperation>(room_operation),
+				const_cast<char*>(roomid.c_str()));
+		};
+	}
+
+	vts_rtc::P2PStateHandler inner_P2P_state_handler = nullptr;
+	if (gst_params.P2P_state_handler) {
+		inner_P2P_state_handler = [](
+			vts_rtc::SessionId sessionid, vts_rtc::P2PState p2p_state) {
+			gst_params.P2P_state_handler(sessionid, static_cast<RtcP2PState>(p2p_state));
+		};
+	}
+
+	vts_rtc::SRSStateHandler inner_SRS_state_handler = nullptr;
+	if (gst_params.SRS_state_handler) {
+		inner_SRS_state_handler = [](
+			vts_rtc::SRSStreamurl streamurl, vts_rtc::P2PState p2p_state) {
+				gst_params.SRS_state_handler((RtcSRSStreamurl)(streamurl.c_str()),
+					static_cast<RtcP2PState>(p2p_state));
+		};
+	}
+
+	vts_rtc::SRSResponseHandler inner_SRS_response_handler = nullptr;
+	if (gst_params.SRS_response_handler) {
+		inner_SRS_response_handler = [](
+			vts_rtc::SRSStreamurl streamurl, vts_rtc::SRSResponse srs_response) {
+				gst_params.SRS_response_handler((RtcSRSStreamurl)(streamurl.c_str()),
+					static_cast<RtcSRSResponse>(srs_response));
+		};
+	}
+
+	vts_rtc::DataChannelStateHandler inner_datachannel_state_handler = nullptr;
+	if (gst_params.datachannel_state_handler) {
+		inner_datachannel_state_handler = [](
+			vts_rtc::SessionId sessionid, const std::string& label, vts_rtc::DataChannelState state) {
+				gst_params.datachannel_state_handler(sessionid, label.c_str(),
+					static_cast<RtcDataChannelState>(state));
+		};
+	}
+
+	vts_rtc::ServerConnectionStateHandler inner_serverconnection_state_handler = nullptr;
+	if (gst_params.serverconnection_state_handler) {
+		inner_serverconnection_state_handler = [](
+			vts_rtc::ServerConnectionState state) {
+			gst_params.serverconnection_state_handler(static_cast<RtcServerConnectionState>(state));
+		};
+	}
+
+	vts_rtc::RecvMessageHandler msg_handler = nullptr;
+	if (gst_params.recv_msg_handler) {
+		msg_handler = [](vts_rtc::SessionId sessionid,
+			const std::string& channel_label, const std::string& msg) {
+			gst_params.recv_msg_handler(sessionid, channel_label.c_str(), msg.c_str(), msg.size());
+		};
+	}
+
+	vts_rtc::RecvAudioFrameHandler audioframe_handler = nullptr;
+	if (gst_params.recv_audioframe_handler) {
+		audioframe_handler = [](
+			vts_rtc::SessionId session_id,
+			const vts_rtc::AudioSourceId& audio_sourceid,
+			vts_rtc::MediaSourceType audio_sourcetype,
+			size_t bits_per_sample,
+			size_t sample_rate,
+			size_t number_of_channels,
+			size_t number_of_frames,
+			const void* audio_data) {
+			size_t audio_data_size = bits_per_sample * number_of_channels *
+				number_of_frames / 8;
+			gst_params.recv_audioframe_handler(session_id,
+				audio_sourceid.c_str(),
+				static_cast<RtcMediaSourceType>(audio_sourcetype),
+				bits_per_sample, sample_rate, number_of_channels,
+				number_of_frames, audio_data, audio_data_size);
+		};
+	}
+
+	vts_rtc::RecvFrameHandler frame_handler = nullptr;
+	if (gst_params.recv_frame_handler) {
+		frame_handler = [](
+			vts_rtc::SessionId session_id,
+			const vts_rtc::VideoSourceId& video_sourceid,
+			vts_rtc::MediaSourceType video_sourcetype,
+			size_t width,
+			size_t height,
+			size_t dimension,
+			const std::vector<unsigned char>& framebuffer) {
+			gst_params.recv_frame_handler(session_id,
+				video_sourceid.c_str(),
+				static_cast<RtcMediaSourceType>(video_sourcetype),
+				width, height, dimension, framebuffer.data(),
+				framebuffer.size());
+		};
+	}
+
+	vts_rtc::ChannelNetworkStatsHandler channel_network_stats_handler = nullptr;
+	if (gst_params.channel_network_stats_handler) {
+		channel_network_stats_handler = [](
+			const vts_rtc::SessionId session_id,
+			const vts_rtc::NetStats& net_stats) {
+			RtcNetStats rtc_net_stats;
+			rtc_net_stats.input = net_stats.input;
+
+			rtc_net_stats.audio_stats.sourceid = net_stats.audio_stats.sourceid.c_str();
+			rtc_net_stats.audio_stats.bitrate_bps = net_stats.audio_stats.bitrate_bps;
+
+			rtc_net_stats.video_stats.sourceid = net_stats.video_stats.sourceid.c_str();
+			rtc_net_stats.video_stats.width = net_stats.video_stats.width;
+			rtc_net_stats.video_stats.height = net_stats.video_stats.height;
+			rtc_net_stats.video_stats.bitrate_bps = net_stats.video_stats.bitrate_bps;
+			rtc_net_stats.video_stats.fps = net_stats.video_stats.fps;
+			rtc_net_stats.video_stats.loss_rate = net_stats.video_stats.loss_rate;
+			rtc_net_stats.video_stats.delay_ms = net_stats.video_stats.delay_ms;
+			rtc_net_stats.video_stats.key_frame_count = net_stats.video_stats.key_frame_count;
+			rtc_net_stats.video_stats.fir_count = net_stats.video_stats.fir_count;
+			rtc_net_stats.video_stats.pli_count = net_stats.video_stats.pli_count;
+			rtc_net_stats.video_stats.nack_count = net_stats.video_stats.nack_count;
+			rtc_net_stats.video_stats.codec_name = net_stats.video_stats.codec_name.c_str();
+
+			gst_params.channel_network_stats_handler(session_id, rtc_net_stats);
+			ReportVideoDelay(session_id, net_stats);
+		};
+	}
+
+	rtc_agent = vts_rtc::RtcAgent::Create(
+		std::string(gst_params.config_filepath),
+		inner_room_handler,
+		nullptr,
+		inner_P2P_state_handler,
+		inner_datachannel_state_handler,
+		inner_serverconnection_state_handler,
+		inner_SRS_state_handler,
+		inner_SRS_response_handler,
+		msg_handler,
+		audioframe_handler,
+		frame_handler,
+		channel_network_stats_handler);
+
+	return rtc_agent ? RtcErrorCode::OK : RtcErrorCode::Failed;
+}
+
+void RtcDestoryAgent() {
+	video_delay_handler.store(nullptr);
+	if (rtc_agent) {
+		RtcLeaveRoom();
+		rtc_agent = nullptr;
+	}
+}
+
+RtcErrorCode RtcGetVideoDevices(RtcVideoDevices* out_video_devices,
+	size_t* out_sz_video_devices) {
+	CHECK_RTCAGENT_INITED
+
+	auto video_devices = rtc_agent->GetVideoDevices();
+	size_t len = video_devices.size();
+	*out_sz_video_devices = len;
+	*out_video_devices = new RtcVideoDevice[len];
+	for (size_t i = 0; i < len; ++i) {
+		const auto& device = video_devices[i];
+		auto& out_device = (*out_video_devices)[i];
+
+		out_device.device_index = device.device_index;
+		out_device.device_name = new char[device.device_name.size() + 1];
+		strcpy(out_device.device_name, device.device_name.c_str());
+		out_device.device_uniqueid = new char[device.device_uniqueid.size() + 1];
+		strcpy(out_device.device_uniqueid, device.device_uniqueid.c_str());
+		out_device.product_uniqueid = new char[device.product_uniqueid.size() + 1];
+		strcpy(out_device.product_uniqueid, device.product_uniqueid.c_str());
+		size_t len2 = device.device_capabilities.size();
+		out_device.sz_device_capabilities = len2;
+		out_device.device_capabilities = new RtcVideoDeviceCapability[len2];
+		for (size_t j = 0; j < len2; ++j) {
+			const auto& device_capability = device.device_capabilities[j];
+			auto& out_device_capability = out_device.device_capabilities[j];
+			out_device_capability.width = device_capability.width;
+			out_device_capability.height = device_capability.height;
+			out_device_capability.max_fps = device_capability.max_fps;
+			// TO DO
+			// VideoType video_type;
+		}
+	}
+	return RtcErrorCode::OK;
+}
+
+void RtcDestoryVideoDevices(RtcVideoDevices video_devices, size_t sz_video_devices) {
+	for (size_t i = 0; i < sz_video_devices; ++i) {
+		if (video_devices[i].device_name) {
+			delete[] video_devices[i].device_name;
+			video_devices[i].device_name = nullptr;
+		}
+
+		if (video_devices[i].device_uniqueid) {
+			delete[] video_devices[i].device_uniqueid;
+			video_devices[i].device_uniqueid = nullptr;
+		}
+
+		if (video_devices[i].product_uniqueid) {
+			delete[] video_devices[i].product_uniqueid;
+			video_devices[i].product_uniqueid = nullptr;
+		}
+
+		if (video_devices[i].device_capabilities) {
+			delete[] video_devices[i].device_capabilities;
+			video_devices[i].device_capabilities = nullptr;
+		}
+	}
+
+	delete[] video_devices;
+}
+
+RtcErrorCode RtcAddDataChannel(RtcDataChannelLabel label,
+	RtcPriorityType priority,
+	bool ordered,
+	int max_retransmits) {
+	CHECK_RTCAGENT_INITED
+
+	return rtc_agent->AddDataChannel(std::string(label),
+		static_cast<vts_rtc::PriorityType>(priority),
+		ordered, max_retransmits) ? RtcErrorCode::OK : RtcErrorCode::Failed;
+}
+
+RtcErrorCode RtcAddExternalAudioSource(RtcAudioSourceId audio_sourceid,
+	RtcPriorityType priority) {
+	CHECK_RTCAGENT_INITED
+
+	return rtc_agent->AddAudioSource(std::string(audio_sourceid),
+		static_cast<vts_rtc::PriorityType>(priority)) ?
+		RtcErrorCode::OK : RtcErrorCode::Failed;
+}
+
+RtcErrorCode RtcAddDeviceVideoSource(size_t device_index,
+	const RtcVideoDeviceCapability* in_device_capability,
+	RtcPriorityType priority) {
+	CHECK_RTCAGENT_INITED
+
+	vts_rtc::VideoDeviceCapability device_capability {
+		in_device_capability->width,
+		in_device_capability->height,
+		in_device_capability->max_fps
+	};
+
+	return rtc_agent->AddVideoSource(device_index, device_capability,
+		static_cast<vts_rtc::PriorityType>(priority)) ?
+		RtcErrorCode::OK : RtcErrorCode::Failed;
+}
+
+RtcErrorCode RtcAddExternalVideoSource(RtcVideoSourceId video_sourceid,
+	RtcPriorityType priority) {
+	CHECK_RTCAGENT_INITED
+
+	return rtc_agent->AddVideoSource(std::string(video_sourceid),
+		static_cast<vts_rtc::PriorityType>(priority)) ?
+		RtcErrorCode::OK : RtcErrorCode::Failed;
+}
+
+RtcErrorCode RtcQueryRoom(const RtcRoomId roomid, RtcRoom* out_room) {
+	CHECK_RTCAGENT_INITED
+
+	vts_rtc::Room room;
+	auto roomcode = rtc_agent->QueryRoom(std::string(roomid), room);
+	if (roomcode == vts_rtc::ErrorCode::OK) {
+		out_room->roomid = new char[strlen(roomid) + 1];
+		strcpy(out_room->roomid, roomid);
+		out_room->room_type = static_cast<RtcRoomType>(room.room_type);
+		auto len = room.sessionids.size();
+		out_room->sz_sessionids = len;
+		out_room->sessionids = new RtcSessionId[len];
+		for (size_t i = 0; i < len; ++i) {
+			out_room->sessionids[i] = room.sessionids[i];
+		}
+		out_room->broadcaster_sessionid = room.broadcaster_sessionid;
+	}
+	return ConvertCode(roomcode);
+}
+
+void RtcDestoryRoom(RtcRoom room) {
+	if (room.roomid) {
+		delete[] room.roomid;
+		room.roomid = nullptr;
+	}
+
+	if (room.sessionids) {
+		delete[] room.sessionids;
+		room.sessionids = nullptr;
+	}
+}
+
+RtcErrorCode RtcQueryRooms(RtcRooms* out_rooms, size_t* out_sz_rooms) {
+	CHECK_RTCAGENT_INITED
+
+	vts_rtc::Rooms rooms;
+	auto roomcode = rtc_agent->QueryRooms(rooms);
+	if (roomcode == vts_rtc::ErrorCode::OK) {
+		auto len = rooms.size();
+		*out_sz_rooms = len;
+		*out_rooms = new RtcRoom[len];
+		size_t cnt = 0;
+		for (const auto& roomid_room : rooms) {
+			const auto& room = roomid_room.second;
+			auto& out_room = (*out_rooms)[cnt++];
+
+			out_room.roomid = new char[room.roomid.size() + 1];
+			strcpy(out_room.roomid, room.roomid.c_str());
+			out_room.room_type = static_cast<RtcRoomType>(room.room_type);
+			auto len2 = room.sessionids.size();
+			out_room.sz_sessionids = len2;
+			out_room.sessionids = new RtcSessionId[len2];
+			for (size_t i = 0; i < len2; ++i) {
+				out_room.sessionids[i] = room.sessionids[i];
+			}
+			out_room.broadcaster_sessionid = room.broadcaster_sessionid;
+		}
+	}
+	return ConvertCode(roomcode);
+}
+
+void RtcDestoryRooms(RtcRooms rooms, size_t sz_rooms) {
+	for (size_t i = 0; i < sz_rooms; ++i) {
+		RtcDestoryRoom(rooms[i]);
+	}
+	delete[] rooms;
+}
+
+RtcErrorCode RtcOpenRoom(const RtcRoomId roomid, RtcRoomType room_type,
+	bool force) {
+	CHECK_RTCAGENT_INITED
+
+	auto roomcode = rtc_agent->OpenRoom(std::string(roomid),
+		static_cast<vts_rtc::RoomType>(room_type), force);
+	return ConvertCode(roomcode);
+}
+
+RtcErrorCode RtcCloseRoom(const RtcRoomId roomid) {
+	CHECK_RTCAGENT_INITED
+
+	auto roomcode = rtc_agent->CloseRoom(std::string(roomid));
+	return ConvertCode(roomcode);
+}
+
+RtcErrorCode RtcJoinRoom(const RtcRoomId roomid) {
+	CHECK_RTCAGENT_INITED
+
+	auto roomcode = rtc_agent->JoinRoom(std::string(roomid));
+	return ConvertCode(roomcode);
+}
+
+RtcErrorCode RtcLeaveRoom() {
+	CHECK_RTCAGENT_INITED
+
+	auto roomcode = rtc_agent->LeaveRoom();
+	return ConvertCode(roomcode);
+}
+
+RtcErrorCode RtcPublishToSRS(const RtcSRSStreamurl SRS_streamurl) {
+	CHECK_RTCAGENT_INITED
+
+	auto SRScode = rtc_agent->PublishToSRS(std::string(SRS_streamurl));
+	return ConvertCode(SRScode);
+}
+
+RtcErrorCode RtcUnpublishToSRS(const RtcSRSStreamurl SRS_streamurl) {
+	CHECK_RTCAGENT_INITED
+
+	auto SRScode = rtc_agent->UnpublishToSRS(std::string(SRS_streamurl));
+	return ConvertCode(SRScode);
+}
+
+RtcErrorCode RtcPlayFromSRS(const RtcSRSStreamurl SRS_streamurl) {
+	CHECK_RTCAGENT_INITED
+
+	auto SRScode = rtc_agent->PlayFromSRS(std::string(SRS_streamurl));
+	return ConvertCode(SRScode);
+}
+
+RtcErrorCode RtcUnplayFromSRS(const RtcSRSStreamurl SRS_streamurl) {
+	CHECK_RTCAGENT_INITED
+
+	auto SRScode = rtc_agent->UnplayFromSRS(std::string(SRS_streamurl));
+	return ConvertCode(SRScode);
+}
+
+RtcErrorCode RtcSendData(RtcSessionId remote_sessionid,
+	RtcDataChannelLabel channel_label, const char* msg, size_t msg_size) {
+	CHECK_RTCAGENT_INITED
+
+	return rtc_agent->SendData(remote_sessionid, std::string(channel_label), std::string(msg, msg_size)) ?
+		RtcErrorCode::OK : RtcErrorCode::Failed;
+}
+
+RtcErrorCode RtcBroadcastData(RtcDataChannelLabel channel_label,
+	const char* msg, size_t msg_size) {
+	CHECK_RTCAGENT_INITED
+
+	return rtc_agent->BroadcastData(std::string(channel_label), std::string(msg, msg_size)) ?
+		RtcErrorCode::OK : RtcErrorCode::Failed;
+}
+
+RtcErrorCode RtcSendAudioFrame(RtcAudioSourceId audio_sourceid,
+		const RtcPCMData* in_pcmdata) {
+	CHECK_RTCAGENT_INITED
+	if (!audio_sourceid || !in_pcmdata || !in_pcmdata->buffer ||
+		in_pcmdata->bits_per_sample == 0 ||
+		in_pcmdata->bits_per_sample % 8 != 0 ||
+		in_pcmdata->sample_rate == 0 ||
+		in_pcmdata->number_of_channels == 0 ||
+		in_pcmdata->number_of_frames == 0) {
+		return RtcErrorCode::Failed;
+	}
+	const size_t bytes_per_sample = in_pcmdata->bits_per_sample / 8;
+	const size_t max_size = std::numeric_limits<size_t>::max();
+	if (in_pcmdata->number_of_channels > max_size / bytes_per_sample ||
+		in_pcmdata->number_of_frames >
+			max_size / (bytes_per_sample * in_pcmdata->number_of_channels) ||
+		in_pcmdata->sz_buffer != bytes_per_sample *
+			in_pcmdata->number_of_channels * in_pcmdata->number_of_frames) {
+		return RtcErrorCode::Failed;
+	}
+
+	vts_rtc::PCMData pcmdata {
+		in_pcmdata->bits_per_sample,
+		in_pcmdata->sample_rate,
+		in_pcmdata->number_of_channels,
+		in_pcmdata->number_of_frames,
+		in_pcmdata->buffer,
+		in_pcmdata->sz_buffer
+	};
+
+	return rtc_agent->SendAudioFrame(std::string(audio_sourceid), pcmdata)
+		? RtcErrorCode::OK : RtcErrorCode::Failed;
+}
+
+RtcErrorCode RtcSendFrame(RtcVideoSourceId video_sourceid, const RtcYUV420pFrame* in_video_frame) {
+	CHECK_RTCAGENT_INITED
+
+	vts_rtc::YUV420pFrame video_frame {
+		in_video_frame->width,
+		in_video_frame->height,
+		in_video_frame->stride_Y,
+		in_video_frame->stride_U,
+		in_video_frame->stride_V,
+		in_video_frame->buffer,  // attention: no copy for performance
+		in_video_frame->sz_buffer
+	};
+
+	rtc_agent->SendFrame(std::string(video_sourceid), video_frame);
+	return RtcErrorCode::OK;
+}
+
+const char* RtcErrorMessage(RtcErrorCode code) {
+	return rtcerrorcode_map[code];
+}

@@ -51,15 +51,15 @@ dozer_audio -> ROS PCM -> dozer_rtc_edge -> RTC console
 ## 2. 目录结构
 
 ```text
-~/workspace/
-├── rtc-framework/                  # RTC SDK 上游，底层 vtsrtc 仍作为外部依赖
-│   └── install/                    # xmake install 产物：libvtsrtc、rtc_* 静态库与头文件
-└── ros2_ws/                        # 本工作空间（git 仓库）
-    ├── README.md                   # 本文件：统一约定
+ros2_ws/
+    ├── README.md
+    ├── vendor/rtc-framework/       # RTC、Jetson 编码器、相机、信令服务源码
+    ├── vendor/jetson/              # 固定版本的第三方 Jetson 开发包
     └── src/
         ├── interfaces/
         │   └── dozer_msgs/         # 接口定义（msg/srv），修改需全员评审
         ├── drivers/
+        │   ├── dozer_media_vendor/ # 导出多媒体依赖
         │   ├── dozer_audio/        # PCM 音频采集节点与播放驱动库
         │   ├── dozer_camera_gmsl/  # GMSL 相机（8 路 V4L2）
         │   └── dozer_radar_sr73f/  # SR73F 毫米波雷达（SocketCAN）
@@ -71,6 +71,7 @@ dozer_audio -> ROS PCM -> dozer_rtc_edge -> RTC console
         ├── comm/
         │   └── dozer_rtc_bridge/   # RTC 网关（由 rtc_edge 改造而来）
         ├── remote_drive/
+        │   ├── dozer_rtc_sdk/      # 从源码编译并导出 libvtsrtc，同时构建信令服务
         │   ├── dozer_rtc_edge/     # 边缘端直采、RTC 视频、共享内存图像输出
         │   └── dozer_rtc_console/  # 独立操作台：视频、控制、音频与检测叠框
         └── system/
@@ -80,14 +81,12 @@ dozer_audio -> ROS PCM -> dozer_rtc_edge -> RTC console
 
 分类目录只用于组织，colcon 会递归查找包；包名全局唯一，以 `dozer_` 开头。
 
-`dozer_rtc_edge` 默认独占六路设备，复用外部 rtc-framework 采集/CUDA 源码；不要同时启动 ROS 相机驱动。每路输出 `/dev/shm/dozer_camera_<name>`，名称为 front_left、front_right、front、rear、left、right，生产者与消费者需同一用户。根脚本默认为六路相机启动 YOLO。详细协议及复制边界见 edge 文档。
+`dozer_rtc_edge` 默认独占六路设备，编译仓库内的 V4L2 采集和 CUDA 转换源码；不要同时启动 ROS 相机驱动。每路输出 `/dev/shm/dozer_camera_<name>`，名称为 front_left、front_right、front、rear、left、right，生产者与消费者需同一用户。根脚本默认为六路相机启动 YOLO。详细协议及复制边界见 edge 文档。
 音频由 `dozer_audio` 的 `audio_capture_node` 独占采集，发布 `/audio/capture`，edge 通过订阅接入 RTC，不再打开麦克风。使用 `ros2 launch dozer_bringup audio.launch.py` 或总启动入口的 `use_audio:=true` 启动；设备参数见 `dozer_bringup/config/audio.yaml`。远端音频播放仍由 edge 调用驱动库。
 运行配置集中在 `dozer_bringup/config/rtc_edge/`，构建、依赖与当前限制见 [src/remote_drive/dozer_rtc_edge/README.md](src/remote_drive/dozer_rtc_edge/README.md)。
 它尚未完成 ROS 检测结果上传与 `/vehicle/*` 翻译，不替代规划中的 `dozer_rtc_bridge`。
 
-`dozer_rtc_console` 从 rtc-framework 迁入应用源码和测试，独立构建和运行，不依赖 edge 包，
-也不加入车端一键启动。共享源码、协议和匹配的 SDK 头文件已迁入包内，SDK 库与模型作为本地发行资产保存，
-console 的构建和运行不再访问外部 rtc-framework；edge 与旧 bridge 的依赖保持不变。
+`dozer_rtc_console` 可以单独构建和运行。发送端和操作台都链接 `dozer_rtc_sdk::vtsrtc`，并在各自的可执行文件旁安装同一份动态库。
 配置集中在 `dozer_bringup/config/rtc_console/`。构建和资产交付要求见
 [src/remote_drive/dozer_rtc_console/README.md](src/remote_drive/dozer_rtc_console/README.md)。
 
@@ -335,48 +334,32 @@ ros2 run dozer_rtc_console rtc_console \
 4. 每个模块发布 `/diagnostics`，至少包含在线状态、输入频率和错误计数。
 5. 解析外部数据（CAN 报文、DataChannel 载荷）必须做长度、范围和有限值校验，并有对应的 gtest 测试。
 6. 代码注释使用中文，仅为不明显的行为、协议约束和安全要求添加注释。
-7. 不提交 `build/`、`install/`、`log/`、模型文件、TensorRT engine 和录包数据（见 `.gitignore`）。
+7. 默认模型权重与两种 INT8 引擎随仓库交付。构建、日志、校准采集和其他导出产物由 `.gitignore` 排除。
 
 ---
 
-## 7. rtc 模块改造指引（rtc_edge → dozer_camera_gmsl + dozer_rtc_bridge）
+## 7. RTC 源码与单仓库构建
 
-### 7.1 范围
+RTC 实现位于 `vendor/rtc-framework/`，从提交 `673cdc0` 导入。修改 C ABI 时同步维护 `vtsrtc/src/c_rtc.h` 与实现。编码器、采集、RTC 应用和协议修改都在本仓库提交。ROS 运行入口分别位于 `src/remote_drive/dozer_rtc_edge` 和 `dozer_rtc_console`。
 
-| rtc-framework 内容 | 处理方式 |
-|---|---|
-| `vtsrtc/`（RTC 库，C ABI） | **不动**，通过 `install/` 产物链接 |
-| `signaling-server/`、`client/apps/rtc_console/` | **不动**，不在车端运行 |
-| `client/protocols/`（nanopb 线协议） | **不动**，继续作为对外协议 |
-| `client/modules/runtime`、`audio`、`logging` | **不动**，以静态库形式被 rtc_bridge 链接 |
-| `client/modules/camera/`（V4L2 采集、CUDA 转换） | **迁移**到 `drivers/dozer_camera_gmsl`（第一阶段为库） |
-| `client/modules/edge/`（单/双目推流编排） | 采集部分并入 `dozer_camera_gmsl`，推流部分并入 `dozer_rtc_bridge` |
-| `client/apps/rtc_edge/edge_application.*`、`edge_options.*` | **改写**为 `dozer_rtc_bridge` 节点 |
-| `client/modules/vision/`（YOLO） | 先在 rtc-framework 内解耦，再迁移到 `dozer_perception` |
-| `client/modules/vehicle/` | 迁移到 `dozer_vehicle`，看门狗与校验逻辑保持不变，需安全评审 |
-
-**不要把 rtc-framework 源码整体复制进本工作空间。**
-
-### 7.2 建议顺序
-
-1. **在 rtc-framework 内解耦 YOLO**：`DualCameraStreamingModule` 不再创建 `YoloFrameConsumer`；`YoloFrameConsumer` 通过回调输出检测结果，不直接调用 `RtcBroadcastData`。完成后现有 `rtc_edge` 行为不变。
-2. **迁移相机库**：`client/modules/camera/` 迁移到 `dozer_camera_gmsl`（第一阶段：共享库 + gtest），设备参数改由 `camera.yaml` 提供。
-3. **补全 xmake 安装产物**：保证 rtc_bridge 需要的库与头文件（`rtc_runtime`、`rtc_vision_detection_protocol`、`rtc_vehicle_control_protocol` 等）都能 `xmake install` 到 `install/`。
-4. **实现 `dozer_rtc_bridge`**：主循环改为 `rclcpp` 执行器；链接 `dozer_camera_gmsl` 取帧推流；新增订阅 `/perception/<name>/detections`、`/radar/*/objects`、`/vehicle/state` 并编码上传。
-5. **控制下行**：DataChannel 收到的驾驶指令解码后发布 `/vehicle/drive_cmd`，换档调用 `/vehicle/set_gear` 服务，回执按原协议返回。
-6. **迁移 YOLO** 到 `dozer_perception`（订阅 `image_small`），迁移车辆控制到 `dozer_vehicle`。
-7. **相机第二阶段**：相机与 rtc_bridge 改为 component，进程内零拷贝传帧（见第 5.3 节）。
-
-### 7.3 构建衔接
-
-`dozer_rtc_bridge/CMakeLists.txt` 已经写好查找逻辑：默认从 `~/workspace/rtc-framework/install` 查找 `c_rtc.h` 与 `libvtsrtc`，并定义导入目标 `vtsrtc::vtsrtc`。路径不同时用以下命令指定：
+在 Jetson Orin、JetPack 6（CUDA 12.6、Jetson Multimedia API、TensorRT 10.3）与 ROS 2 Humble 环境，安装 OpenCV、OpenGL、OpenSSL、V4L2、GStreamer 开发包以及 protobuf 编译器。CMake 从仓库解包固定版本的 WebRTC 与媒体依赖，源码可以检出到任意目录。GPU 推理的 Python 环境由 `./setup_gpu_inference.sh` 建立，首次安装 Python 软件包需要网络。依赖版本见 [Jetson 依赖清单](vendor/jetson/README.md)。
 
 ```bash
-colcon build --packages-select dozer_rtc_bridge \
-  --cmake-args -DRTC_FRAMEWORK_INSTALL=/path/to/rtc-framework/install
+source /opt/ros/humble/setup.bash
+export PATH=/usr/local/cuda/bin:$PATH
+MAKEFLAGS=-j1 CMAKE_BUILD_PARALLEL_LEVEL=1 colcon build --executor sequential --cmake-args -DCMAKE_BUILD_TYPE=Release
+source install/setup.bash
+ros2 run dozer_rtc_console rtc_console --help
 ```
 
-rtc-framework 侧继续遵守其 `AGENTS.md`（C++14、C ABI 不变、nanopb 生成规则等）；ROS 包用 C++17 编译并链接这些库。
+需要自建信令服务时，在含有 `signaling-server.cfg` 和 `web/` 的目录启动。仓库附带的配置与静态页面安装在 SDK 的 share 目录。
+
+```bash
+cd "$(ros2 pkg prefix --share dozer_rtc_sdk)"
+ros2 run dozer_rtc_sdk signaling-server
+```
+
+两个客户端的 `rtc.cfg` 可分别配置为实际信令服务地址。
 
 ---
 

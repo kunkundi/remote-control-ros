@@ -9,38 +9,7 @@ console 不是 ROS 节点，不运行本地推理；它通过 `perception.fused.
 
 ## 依赖
 
-- ROS 2 Humble、ament_cmake、C++17 编译器、OpenGL 开发库。
-- 本工作空间的 `dozer_audio` 播放/采集库及其 SDL3 依赖。
-- 包内 `vendor/vtsrtc/` 的匹配 C SDK 头文件和动态库。
-- nanopb、nlohmann_json、libyuv、`libprotobuf-dev`、`protobuf-compiler`、含 SDL3 和 OpenGL3 后端的 ImGui。
-
-默认复用本机已有 xmake 依赖缓存，不下载依赖、不调用上游 xmake 构建，也不修改上游仓库。
-车辆控制和视频视图协议仍由本包维护。融合检测协议与 edge 共用，构建时从相邻的 `src/remote_drive/protocols/fused_detection.proto` 生成，不链接 edge。
-
-当前机器已迁入以下本地发行资产：
-
-```text
-vendor/vtsrtc/include/c_rtc.h
-vendor/vtsrtc/lib/libvtsrtc.aarch64.so
-```
-
-SDK 是匹配原头文件的预编译库，不是 SDK 实现源码；不需要先在其他仓库编译或安装 SDK。
-库随本包安装到可执行文件同目录，程序以库名链接，并通过 `$ORIGIN` 加载，避免写入原仓库绝对路径。
-当前库面向 Jetson/aarch64，仍依赖系统 GStreamer、V4L2 和 JetPack/NVIDIA 运行库，不是通用 x86 SDK。
-
-SDK 库被 Git 忽略，仅克隆本仓库不会自动得到该二进制资产。
-迁移到其他机器时，需由独立 SDK 发行包提供上述文件，或通过下列变量指定已有文件；无需提供原 rtc-framework 仓库。
-
-可通过 `--cmake-args` 覆盖这些 CMake 缓存变量：
-
-| 变量 | 默认值 | 用途 |
-|---|---|---|
-| `VTSRTC_SDK_ROOT` | 本包的 `vendor/vtsrtc` | 独立 SDK，包含 `include/` 与 `lib/` |
-| `RTC_DEPENDENCY_CACHE` | `$HOME/.xmake/packages` | 依赖前缀搜索路径 |
-
-也可通过 `CMAKE_PREFIX_PATH`、`imgui_DIR` 和对应的库/头文件缓存变量指定已有依赖。
-SDL3 的查找由 `dozer_audio` 管理。SDK 头文件和库只能从选定 SDK 目录查找，不回退到上游安装目录。
-原 `RTC_FRAMEWORK_ROOT`、`RTC_FRAMEWORK_INSTALL` 和 `yolo_model` 参数已不再使用。
+在 Jetson Orin 上使用 ROS 2 Humble、JetPack 6、OpenGL、protobuf 和本工作空间的 `dozer_audio`、`dozer_media_vendor`、`dozer_rtc_sdk`。colcon 从同仓库源码构建 vtsrtc，操作台通过 `$ORIGIN` 加载安装在可执行文件旁的动态库。共享检测协议由 protobuf 在构建时生成。
 
 ## 构建与运行
 
@@ -99,6 +68,5 @@ ctest --test-dir build/dozer_rtc_console --output-on-failure
 融合检测测试覆盖 Protobuf 解码、重复和乱序丢弃、快照过期及空快照清理。
 这些测试不启动 RTC 会话、不打开真实相机，不验证 GUI 显示、真实音频设备、RTC 网络链路或实车控制。
 
-当前本地 SDK 没有新的视频延迟统计接口。CMake 同时检查头文件与链接符号，支持时启用该统计；
-不支持时仅显示统计不可用，不替换 SDK 头文件、不伪造 ABI，也不影响其他功能的编译。
+操作台使用本仓库 C ABI 提供的视频延迟统计接口，ABI 测试随 `dozer_rtc_sdk` 构建。
 console 按设备和相机缓存叠框。`camera:<name>` 更新（包括空结果）只影响对应相机，各路独立在接收后 500 ms 过期。`radar_fusion` 周期快照独立保留，不覆盖单相机更新；未收到带范围标记的更新时兼容旧的整包叠框。带相机框的 3D 目标显示融合坐标，纯雷达目标不绘制视频框。叠框不按采集时间戳与视频做精确同步。修复叠框闪烁需同步更新 `dozer_fusion`、edge 和 console；旧版 `vision.detect.v1` 不兼容。

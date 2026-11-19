@@ -7,6 +7,6 @@ RTC 网关（通信层），由 rtc-framework 的 `rtc_edge` 改造而来。负�
 - 发布：`/vehicle/drive_cmd`
 - 订阅：`/perception/front_left/detections`、`/perception/front_right/detections`、`/radar/*/objects`、`/vehicle/state`，编码为 nanopb 后经 DataChannel 上传
 - 调用：`/vehicle/set_gear` 服务
-- 依赖：`~/workspace/rtc-framework/install`（CMake 变量 `RTC_FRAMEWORK_INSTALL`），导入目标 `vtsrtc::vtsrtc`
+- 依赖：工作空间包 `dozer_rtc_sdk`，导入目标 `dozer_rtc_sdk::vtsrtc`
 
 不再包含相机采集代码。改造范围与顺序见工作空间 README 第 7 节。

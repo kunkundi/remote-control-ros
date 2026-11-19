@@ -6,6 +6,8 @@
   <maintainer email="todo@example.com">TODO</maintainer>
   <license>Proprietary</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>dozer_rtc_sdk</depend>
+  <depend>dozer_media_vendor</depend>
   <depend>rclcpp</depend>
   <depend>sensor_msgs</depend>
   <depend>dozer_audio</depend>
@@ -14,8 +16,6 @@
   <exec_depend>dozer_camera_gmsl</exec_depend>
   <depend>libopencv-dev</depend>
   <depend>libssl-dev</depend>
-  <depend>libasio-dev</depend>
-  <depend>nlohmann-json-dev</depend>
   <build_depend>protobuf-dev</build_depend>
   <exec_depend>protobuf</exec_depend>
   <exec_depend>ros2launch</exec_depend>

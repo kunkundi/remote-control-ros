@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.18)
+project(dozer_media_vendor LANGUAGES NONE)
+find_package(ament_cmake REQUIRED)
+include(../../../cmake/jetson_archive.cmake)
+dozer_extract_jetson_archive(media-deps-aarch64.tar.zst prefix)
+install(DIRECTORY "${prefix}/include" "${prefix}/lib" DESTINATION share/${PROJECT_NAME}/jetson)
+install(DIRECTORY ../../../vendor/jetson/licenses DESTINATION share/${PROJECT_NAME})
+ament_package(CONFIG_EXTRAS media.cmake)

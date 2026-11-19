@@ -9,8 +9,7 @@
   只处理最新帧，慢推理不反压采集；60 Hz 轮询只触发新序号，实际推理速率由模型吞吐决定。每个 YOLO 节点每 5 秒打印处理帧数、`model.predict()` 平均/最大耗时和模型内部推理平均耗时（毫秒）。
 - 共享内存消费端先拷贝 I420 快照并释放锁，再转换 BGR 和推理。默认拒绝发布后超过 200 ms 的帧；producer 重启后自动跟随新文件。相机标识必须与 `source_id` 一致。结果保留输入时间戳和生产者帧序号，不发布中间 ROS Image。
 - ROS 回退支持 `rgb8`、`bgr8`、`rgba8`、`bgra8`，输出时间戳沿用输入图像时间。
-- 模型文件放在本包的 `model/` 目录，共享内存模式下一至六路共用 `best_int8_batch6.engine`（固定 batch=6）；原始 `best.pt` 和单路 `best_int8.engine` 保留；
-  `dozer_bringup/config/perception.yaml` 已将相机节点指向该文件。
+- 模型随本包安装，共享内存批推理默认使用固定 batch=6 的 `best_int8_batch6.engine`，单路节点默认使用 `best_int8.engine`。可用参数 `model_path` 覆盖。
   模型文件不入 Git；INT8 engine 由当前 Jetson 生成，换设备或 TensorRT 版本需重新导出。当前校准图片来自室内场景，部署前仍需用实际作业场景验证精度。
 
 `start_all.sh` 默认启动六路 YOLO 和三台雷达且不开窗口；`start_detection_viewer.sh` 默认启动六路 YOLO、前左雷达和预览窗口。通过 launch 的 `perception_cameras:=front_left,front_right,front,rear,left,right` 或根脚本的 `--perception-cameras front_left,front_right,front,rear,left,right` 启用六路，也可选择任意非空子集；改变运行中的名单须显式 `--restart`。共享内存模式下一至六路只启动一个 YOLO 批推理进程。批推理处理最新帧，最多等待 40 ms 集齐相机，不足六帧时补齐输入并只发布真实帧；因此少于六路也会执行六张图的计算。批量推理按预处理、TensorRT、后处理、发布的顺序执行。预览显示所选相机，雷达窗口只显示前左雷达；融合按配对配置处理三台雷达和六路相机。

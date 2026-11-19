@@ -89,8 +89,8 @@ class CameraShmTests(unittest.TestCase):
             frame_reader=SimpleNamespace(read=lambda: frame),
             get_parameter=lambda name: SimpleNamespace(value=parameters[name]),
             get_logger=lambda: SimpleNamespace(error=lambda *args, **kwargs: errors.append(args)),
-            device=0,
-            model=SimpleNamespace(predict=lambda *args, **kwargs: [SimpleNamespace(boxes=[])]),
+            device=0, timing_started=time.monotonic(), timing_samples=[],
+            model=SimpleNamespace(predict=lambda *args, **kwargs: [SimpleNamespace(boxes=[], speed={})]),
             publisher=SimpleNamespace(publish=outputs.append))
         node.infer = lambda image, header, sequence: YoloNode.infer(node, image, header, sequence)
         YoloNode.on_shared_frame(node)

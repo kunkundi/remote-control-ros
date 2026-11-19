@@ -3,11 +3,12 @@
 <package format="3">
   <name>dozer_rtc_bridge</name>
   <version>0.1.0</version>
-  <description>RTC 网关：视频编码推流、算法/雷达结果上传、远程控制下行，链接 rtc-framework 的 libvtsrtc；相机采集由 dozer_camera_gmsl 提供</description>
+  <description>RTC 网关：视频编码推流、算法/雷达结果上传、远程控制下行，链接 本工作空间的 libvtsrtc；相机采集由 dozer_camera_gmsl 提供</description>
   <maintainer email="todo@example.com">TODO</maintainer>
   <license>Proprietary</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>dozer_rtc_sdk</depend>
   <depend>rclcpp</depend>
   <depend>sensor_msgs</depend>
   <depend>dozer_msgs</depend>

@@ -35,6 +35,10 @@ class PerceptionLaunchTests(unittest.TestCase):
                 context = self.context(selection)
                 LAUNCH.validate_camera_backend(context)
                 with patch.object(LAUNCH, 'Node', side_effect=lambda **values: values):
+                    batch = LAUNCH.create_perception_nodes(context)
+                    self.assertEqual([node['name'] for node in batch], ['yolo_batch'])
+                    self.assertEqual(batch[0]['arguments'], ['--camera-names=' + selection])
+                    context.launch_configurations['image_backend'] = 'ros'
                     nodes = LAUNCH.create_perception_nodes(context)
                 self.assertEqual([node['name'] for node in nodes],
                                  ['yolo_' + name for name in selection.split(',')])
@@ -108,7 +112,8 @@ class PerceptionLaunchTests(unittest.TestCase):
                 initializers = ' '.join(f'[{shlex.quote(name)}]={count}' for name, count in running.items())
                 program = (
                     'set -euo pipefail\n' + functions + '\nfind_running_modules() { :; }\n'
-                    'modules=(perception)\ndeclare -A running=([perception]="101 102 ")\n'
+                    'modules=(perception)\ndeclare -A running=([perception]="101 ")\n'
+                    'radar_names=front_left\nrunning_perception_mode=batch\n'
                     f'declare -A running_perception=({initializers})\n'
                     f'perception_cameras={shlex.quote(selection)}\n'
                     'IFS=, read -r -a selected_perception_cameras <<< "$perception_cameras"\n'
@@ -153,7 +158,7 @@ class PerceptionLaunchTests(unittest.TestCase):
             program = (
                 'set -euo pipefail\n' + function.replace('/dev/shm/', directory + '/')
                 + '\nfind_running_modules() { :; }\nmodules=(rtc)\n'
-                'declare -A running=([rtc]=101)\nexisting=keep\nedge_only=false\nviewer=false\n'
+                'radar_names=front_left\ndeclare -A running=([rtc]=101)\nexisting=keep\nedge_only=false\nviewer=false\n'
                 f'perception_cameras={shlex.quote(",".join(LAUNCH.CAMERA_NAMES))}\n'
                 'IFS=, read -r -a selected_perception_cameras <<< "$perception_cameras"\n'
                 'prepare_launch\n')

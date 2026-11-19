@@ -6,6 +6,7 @@ import resource
 import time
 from pathlib import Path
 
+from ament_index_python.packages import get_package_share_path
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Header
@@ -20,7 +21,8 @@ CAMERA_NAMES = ('front_left', 'front_right', 'front', 'rear', 'left', 'right')
 class YoloBatchNode(Node):
     def __init__(self, camera_names):
         super().__init__('yolo_batch')
-        self.declare_parameter('model_path', '')
+        model = get_package_share_path('dozer_perception') / 'model' / 'best_int8_batch6.engine'
+        self.declare_parameter('model_path', str(model))
         self.declare_parameter('confidence', 0.25)
         self.declare_parameter('device', 0)
         self.declare_parameter('shm_prefix', 'dozer_camera_')

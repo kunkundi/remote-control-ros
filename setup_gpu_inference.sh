@@ -10,8 +10,13 @@ python3 -m venv --system-site-packages "$venv"
   'torch==2.8.0' 'torchvision==0.23.0'
 "$venv/bin/python" -m pip install --no-deps 'nvidia-cudnn-cu12==9.3.0.75'
 
+# Resolve application dependencies after installing the Jetson-specific PyTorch wheels.
+"$venv/bin/python" -m pip install 'torch==2.8.0' 'torchvision==0.23.0' \
+  'numpy<2' 'opencv-python<4.12' 'ultralytics==8.4.150'
+
 export LD_LIBRARY_PATH="$venv/lib/python3.10/site-packages/nvidia/cudnn/lib:${LD_LIBRARY_PATH:-}"
 "$venv/bin/python" - <<'PY'
+from ultralytics import YOLO
 import torch
 torch.backends.cudnn.enabled = False
 assert torch.cuda.is_available(), 'CUDA unavailable'

@@ -59,7 +59,6 @@ ros2 launch dozer_bringup dozer.launch.py \
 与带框预览窗口，并弹出前左雷达坐标系的实时俯视图；按 Ctrl+C 停止本次新启动的模块。
 首次使用 GPU 推理时，在工作空间根目录运行 `./setup_gpu_inference.sh` 建立
 `.venv-gpu`；依赖仅安装在该环境中，启动脚本会先验证 CUDA 卷积。
-当前需将 INT8 engine 放在 `src/perception/dozer_perception/model/best_int8.engine`，
-并确保相机设备未被其他进程占用，`can0` 已配置且可用。
+默认 INT8 引擎随 `dozer_perception` 安装。启动前确保相机设备未被其他进程占用，`can0` 已配置且可用。
 绿色检测框表示匹配到雷达目标，黄色框表示仅由 YOLO 检出。
 当前内外参是联调初值，雷达与检测框的匹配结果须在标定后使用。

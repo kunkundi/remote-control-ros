@@ -5,6 +5,7 @@ from pathlib import Path
 import time
 
 import numpy as np
+from ament_index_python.packages import get_package_share_path
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
@@ -23,7 +24,8 @@ class YoloNode(Node):
         self.declare_parameter('max_frame_age_sec', 0.2)
         self.declare_parameter('detections_topic', '/perception/front_left/detections')
         self.declare_parameter('source_id', 'front_left')
-        self.declare_parameter('model_path', '')
+        model = get_package_share_path('dozer_perception') / 'model' / 'best_int8.engine'
+        self.declare_parameter('model_path', str(model))
         self.declare_parameter('confidence', 0.25)
         self.declare_parameter('device', 0)
         path = self.get_parameter('model_path').value

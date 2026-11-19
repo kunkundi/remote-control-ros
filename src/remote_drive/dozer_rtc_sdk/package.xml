@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>dozer_rtc_sdk</name>
+  <version>0.1.0</version>
+  <description>RTC C API, Jetson video encoder and signaling server.</description>
+  <maintainer email="todo@example.com">TODO</maintainer>
+  <license>Proprietary</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>dozer_media_vendor</depend>
+  <depend>libssl-dev</depend>
+  <depend>libv4l-dev</depend>
+  <depend>libx11-dev</depend>
+  <depend>libgstreamer-plugins-base1.0-dev</depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>
