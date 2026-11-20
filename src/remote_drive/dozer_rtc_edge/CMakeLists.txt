@@ -16,27 +16,24 @@ find_package(OpenSSL REQUIRED)
 
 find_package(dozer_media_vendor REQUIRED)
 find_package(dozer_rtc_sdk REQUIRED)
-set(framework "${CMAKE_CURRENT_SOURCE_DIR}/../../../vendor/rtc-framework")
+find_package(dozer_rtc_common REQUIRED)
 
 set(app "${CMAKE_CURRENT_SOURCE_DIR}/src/app")
 add_library(edge_dependencies INTERFACE)
 target_include_directories(edge_dependencies INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/include"
-  "${framework}/client/modules/camera/include")
-target_include_directories(edge_dependencies INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/protocols/vehicle/generated")
-target_include_directories(edge_dependencies INTERFACE "${framework}/third_party/Simple-WebSocket-Server" ${OpenCV_INCLUDE_DIRS})
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../../vendor/Simple-WebSocket-Server" ${OpenCV_INCLUDE_DIRS})
 target_compile_definitions(edge_dependencies INTERFACE ASIO_STANDALONE USE_STANDALONE_ASIO)
-target_link_libraries(edge_dependencies INTERFACE dozer_rtc_sdk::vtsrtc Threads::Threads dozer_media_vendor::headers dozer_audio::dozer_audio OpenSSL::SSL OpenSSL::Crypto dozer_media_vendor::nanopb ${OpenCV_LIBS})
+target_link_libraries(edge_dependencies INTERFACE
+  dozer_rtc_sdk::vtsrtc dozer_rtc_common::dozer_rtc_common
+  dozer_media_vendor::headers dozer_audio::dozer_audio
+  Threads::Threads OpenSSL::SSL OpenSSL::Crypto ${OpenCV_LIBS})
 
 add_library(edge_support STATIC
   src/ros/ros_logging.cpp
-  src/runtime/process_runtime.cpp
   src/runtime/rtc_session.cpp
   src/vehicle/vehicle_control_interface.cpp
   src/vehicle/vehicle_control_module.cpp
-  src/dog/dog_command_forwarder.cpp
-  protocols/vehicle/generated/rtc_vehicle.pb.c
-  src/protocols/vehicle/vehicle_control_protocol.cpp
-  src/protocols/vision/view_control_protocol.cpp)
+  src/dog/dog_command_forwarder.cpp)
 target_link_libraries(edge_support edge_dependencies)
 ament_target_dependencies(edge_support rclcpp)
 
@@ -45,24 +42,22 @@ if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
 endif()
 enable_language(CUDA)
 find_package(CUDAToolkit REQUIRED)
-set(camera_source "${framework}/client/modules/camera/src")
 add_library(edge_direct_camera STATIC
-  "${camera_source}/v4l2_camera.cpp"
-  "${camera_source}/single/async_image_source.cpp"
-  "${camera_source}/single/frame_converter.cpp"
-  "${camera_source}/single/uyvy_to_i420_cuda.cu"
+  src/camera/v4l2_camera.cpp
+  src/camera/single/async_image_source.cpp
+  src/camera/single/frame_converter.cpp
+  src/camera/single/uyvy_to_i420_cuda.cu
   src/ros/direct_image_source.cpp)
 target_link_libraries(edge_direct_camera PUBLIC edge_support CUDA::cudart dozer_media_vendor::yuv)
 target_compile_options(edge_direct_camera PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
 
-include(../protocols/fused_detection.cmake)
 add_executable(rtc_edge
   ${app}/main.cpp ${app}/edge_options.cpp ${app}/edge_application.cpp ${app}/video_send_planner.cpp
   src/ros/ros_context.cpp
   src/ros/ros_audio_source.cpp
   src/ros/ros_image_source.cpp
   src/ros/ros_camera_streaming.cpp)
-target_link_libraries(rtc_edge edge_direct_camera fused_detection_protocol)
+target_link_libraries(rtc_edge edge_direct_camera)
 ament_target_dependencies(rtc_edge rclcpp sensor_msgs dozer_msgs)
 include(../../../cmake/rtc_runtime.cmake)
 dozer_install_rtc_app(rtc_edge)
@@ -74,6 +69,10 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/rtc.cfg" "${CMAKE_CURRENT_BINARY_DIR}
   DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)
+  add_executable(rtc_camera_tests test/camera/single/rtc_camera_tests.cpp)
+  target_link_libraries(rtc_camera_tests PRIVATE edge_direct_camera)
+  add_test(NAME rtc_camera_tests COMMAND rtc_camera_tests)
+  set_tests_properties(rtc_camera_tests PROPERTIES TIMEOUT 30 LABELS hardware)
   add_executable(direct_image_source_tests test/ros/direct_image_source_tests.cpp)
   target_link_libraries(direct_image_source_tests PRIVATE edge_direct_camera)
   add_test(NAME direct_image_source_tests COMMAND direct_image_source_tests)
@@ -101,6 +100,8 @@ if(BUILD_TESTING)
   set_tests_properties(rtc_edge_default_config_tests PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/no_config")
   edge_test(rtc_edge_streaming_tests ${app}/video_send_planner.cpp test/app/video_send_planner_tests.cpp)
   edge_test(rtc_vehicle_control_protocol_tests test/protocols/vehicle/vehicle_control_protocol_tests.cpp)
+  edge_test(dog_command_forwarder_tests test/dog/dog_command_forwarder_tests.cpp)
+  set_tests_properties(dog_command_forwarder_tests PROPERTIES TIMEOUT 30)
   edge_test(rtc_vehicle_control_module_tests test/vehicle/vehicle_control_module_tests.cpp)
   edge_test(rtc_vision_view_control_protocol_tests test/protocols/vision/view_control_protocol_tests.cpp)
   add_executable(ros_image_source_tests test/ros/ros_image_source_tests.cpp

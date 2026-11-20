@@ -34,7 +34,7 @@ dozer_audio -> ROS PCM -> dozer_rtc_edge -> RTC console
 | 感知层 `perception/` | 检测、跟踪、融合等算法 | `dozer_perception`、`dozer_fusion` |
 | 控制层 `control/` | 车辆控制与安全看门狗 | `dozer_vehicle` |
 | 通信层 `comm/` | 与远程驾驶台的通信 | `dozer_rtc_bridge` |
-| 远程驾驶 `remote_drive/` | RTC 车端和独立操作台 | `dozer_rtc_edge`、`dozer_rtc_console` |
+| 远程驾驶 `remote_drive/` | RTC SDK、共享协议、车端和操作台 | `dozer_rtc_sdk`、`dozer_rtc_common`、`dozer_rtc_edge`、`dozer_rtc_console` |
 | 系统层 `system/` | 启动编排、配置、工具 | `dozer_bringup`、`dozer_tools` |
 
 驱动层不依赖感知/控制/通信层；感知层通过共享内存图像协议或 ROS 消息使用传感器数据，不链接驱动代码。当前相机采集库在 edge 内运行，ROS 相机节点仅保留为调试回退。
@@ -53,8 +53,10 @@ dozer_audio -> ROS PCM -> dozer_rtc_edge -> RTC console
 ```text
 ros2_ws/
     ├── README.md
-    ├── vendor/rtc-framework/       # RTC、Jetson 编码器、相机、信令服务源码
-    ├── vendor/jetson/              # 固定版本的第三方 Jetson 开发包
+    ├── vendor/
+    │   ├── jetson/                 # 固定版本的 WebRTC 和多媒体开发包
+    │   ├── Simple-Web-Server/      # HTTP 收发所需头文件与许可证
+    │   └── Simple-WebSocket-Server/ # WebSocket 收发所需头文件与许可证
     └── src/
         ├── interfaces/
         │   └── dozer_msgs/         # 接口定义（msg/srv），修改需全员评审
@@ -72,6 +74,7 @@ ros2_ws/
         │   └── dozer_rtc_bridge/   # RTC 网关（由 rtc_edge 改造而来）
         ├── remote_drive/
         │   ├── dozer_rtc_sdk/      # 从源码编译并导出 libvtsrtc，同时构建信令服务
+        │   ├── dozer_rtc_common/   # 收发两端共用的协议、配置和进程工具
         │   ├── dozer_rtc_edge/     # 边缘端直采、RTC 视频、共享内存图像输出
         │   └── dozer_rtc_console/  # 独立操作台：视频、控制、音频与检测叠框
         └── system/
@@ -220,10 +223,10 @@ source install/setup.bash
 ROS_DOMAIN_ID=182 ROS_LOCALHOST_ONLY=1 \
   DOZER_SHM_TEST_WRITER="$PWD/build/dozer_rtc_edge/shared_camera_frame_tests" \
   colcon test --packages-select dozer_rtc_edge dozer_perception dozer_bringup \
-  --return-code-on-test-failure
+  --return-code-on-test-failure --ctest-args -LE hardware
 ```
 
-当前 16 项 CTest 覆盖图像接入、共享内存隔离与过期处理、跨语言消费，以及相机名单和启动保护；其中感知与 bringup 测试分别包含 6 项、8 项 Python 用例。这些测试不打开真实相机、不重启运行服务，也不代表六路 GPU 推理、RTC 接收帧率或实车融合精度已经验收。
+这组测试覆盖图像接入、共享内存隔离与过期处理、跨语言消费，以及相机名单和启动保护；其中感知与 bringup 测试分别包含 6 项、8 项 Python 用例。这些测试不打开真实相机、不重启运行服务，也不代表六路 GPU 推理、RTC 接收帧率或实车融合精度已经验收。
 
 ### 3.4 独立 RTC Console
 
@@ -287,7 +290,7 @@ ros2 run dozer_rtc_console rtc_console \
 
 - `dozer_msgs` 是所有模块的公共契约，修改必须通过合并请求，并由所有受影响模块的负责人评审。
 - 已投入使用的字段不得改名、改类型或改语义；兼容修改只能新增字段。
-- 与 rtc 线协议对应的消息（`DriveCommand`、`VehicleState`、`SetGear`）字段必须与 rtc-framework 的 `.proto` 保持一致。
+- 与 rtc 线协议对应的消息（`DriveCommand`、`VehicleState`、`SetGear`）字段必须与 `src/remote_drive/dozer_rtc_common/protocols/vehicle/schema/rtc_vehicle.proto` 保持一致。
 
 ---
 
@@ -317,7 +320,7 @@ ros2 run dozer_rtc_console rtc_console \
 
 | 阶段 | 形式 | 说明 |
 |---|---|---|
-| 第一阶段 | `dozer_camera_gmsl` 为 C++ 共享库 | 从 rtc-framework `client/modules/camera/` 迁移；`dozer_rtc_bridge` 直接链接，行为与现有 `rtc_edge` 一致，先理清代码归属 |
+| 第一阶段 | `dozer_camera_gmsl` 为 C++ 共享库 | 从 `dozer_rtc_edge/src/camera/` 迁移；`dozer_rtc_bridge` 直接链接，行为与现有 `rtc_edge` 一致，先理清代码归属 |
 | 第二阶段 | `dozer_camera_gmsl` 为 ROS 2 component | 与 `dozer_rtc_bridge` 加载到同一个 `component_container_mt`，开启 `use_intra_process_comms`；帧类型用 `rclcpp::TypeAdapter`（REP-2007）适配 `sensor_msgs/Image`：同进程订阅者拿到共享 CUDA/DMA 缓冲区（零拷贝），只有 rosbag/rviz 等跨进程订阅者出现时才转换 |
 
 降采样帧 `/camera/<name>/image_small` 由 `dozer_camera_gmsl` 发布，供感知算法跨进程订阅。
@@ -340,7 +343,16 @@ ros2 run dozer_rtc_console rtc_console \
 
 ## 7. RTC 源码与单仓库构建
 
-RTC 实现位于 `vendor/rtc-framework/`，从提交 `673cdc0` 导入。修改 C ABI 时同步维护 `vtsrtc/src/c_rtc.h` 与实现。编码器、采集、RTC 应用和协议修改都在本仓库提交。ROS 运行入口分别位于 `src/remote_drive/dozer_rtc_edge` 和 `dozer_rtc_console`。
+RTC 业务源码集中在 `src/remote_drive/`，最初移植自 rtc-framework 提交 `673cdc0`。
+
+| 修改内容 | 源码位置（相对 `src/remote_drive/`） |
+| --- | --- |
+| RTC C 接口及实现 | `dozer_rtc_sdk/include/vtsrtc/c_rtc.h`、`dozer_rtc_sdk/src/` |
+| Jetson H.264 编码器 | `dozer_rtc_sdk/src/video/encode/nvidia-jetson/` |
+| 信令服务、配置和网页 | `dozer_rtc_sdk/signaling/` |
+| 车辆、视图切换和融合检测协议 | `dozer_rtc_common/protocols/`、`dozer_rtc_common/src/` |
+| V4L2 采集与 CUDA 转换 | `dozer_rtc_edge/src/camera/` |
+| 车端和操作台入口 | `dozer_rtc_edge/src/app/`、`dozer_rtc_console/src/app/` |
 
 在 Jetson Orin、JetPack 6（CUDA 12.6、Jetson Multimedia API、TensorRT 10.3）与 ROS 2 Humble 环境，安装 OpenCV、OpenGL、OpenSSL、V4L2、GStreamer 开发包以及 protobuf 编译器。CMake 从仓库解包固定版本的 WebRTC 与媒体依赖，源码可以检出到任意目录。GPU 推理的 Python 环境由 `./setup_gpu_inference.sh` 建立，首次安装 Python 软件包需要网络。依赖版本见 [Jetson 依赖清单](vendor/jetson/README.md)。
 
@@ -394,7 +406,7 @@ ros2 run dozer_tools record_bag.sh
 1. **代码以 git 仓库为准**。本目录是 git 仓库，后续推送到团队代码托管平台；Jetson 上的副本用于联调和部署，**不要多人直接在 Jetson 上改代码**。
 2. **日常开发在 x86 PC 上**（Ubuntu 22.04 + Humble），用 `dozer_tools` 的模拟数据或共享 bag 回放调试；Jetson 只用于集成验证。
 3. **分支**：`main` 受保护；功能分支命名为 `<模块>/<简述>`，例如 `radar/sr73f-driver`；通过合并请求合入。
-4. **提交规范**：`<type>(<scope>): <中文摘要>`，type 取值同 rtc-framework 的 `AGENTS.md`；scope 用包名去掉 `dozer_` 前缀，例如 `feat(radar_sr73f): 增加目标解析`。
+4. **提交规范**：`<type>(<scope>): <中文摘要>`，type 沿用 Conventional Commits，scope 用包名去掉 `dozer_` 前缀，例如 `feat(radar_sr73f): 增加目标解析`。
 5. **接口先行**：涉及跨模块的数据先改 `dozer_msgs` 并评审合入，再改实现。
 6. **模拟数据**：上游模块未就绪时，下游使用 `dozer_tools` 的模拟发布器开发；新模块应顺带提供自己的模拟发布器。
 7. **共享数据**：实车录制的 bag 放在共享盘，统一命名 `dozer_<日期>_<场景>`，并附简短说明。

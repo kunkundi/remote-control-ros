@@ -9,7 +9,7 @@ console 不是 ROS 节点，不运行本地推理；它通过 `perception.fused.
 
 ## 依赖
 
-在 Jetson Orin 上使用 ROS 2 Humble、JetPack 6、OpenGL、protobuf 和本工作空间的 `dozer_audio`、`dozer_media_vendor`、`dozer_rtc_sdk`。colcon 从同仓库源码构建 vtsrtc，操作台通过 `$ORIGIN` 加载安装在可执行文件旁的动态库。共享检测协议由 protobuf 在构建时生成。
+在 Jetson Orin 上使用 ROS 2 Humble、JetPack 6、OpenGL、protobuf 和本工作空间的 `dozer_audio`、`dozer_media_vendor`、`dozer_rtc_sdk`、`dozer_rtc_common`。colcon 从同仓库源码构建 vtsrtc，操作台通过 `$ORIGIN` 加载安装在可执行文件旁的动态库。`dozer_rtc_common` 提供与车端共用的车辆、视图切换和融合检测协议。
 
 ## 构建与运行
 

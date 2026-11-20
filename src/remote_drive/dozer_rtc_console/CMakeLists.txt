@@ -10,37 +10,25 @@ find_package(dozer_audio REQUIRED)
 
 find_package(dozer_media_vendor REQUIRED)
 find_package(dozer_rtc_sdk REQUIRED)
+find_package(dozer_rtc_common REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 
 set(app "${CMAKE_CURRENT_SOURCE_DIR}/src/app")
-set(protocols "${CMAKE_CURRENT_SOURCE_DIR}/protocols")
 add_library(console_options STATIC "${app}/rtc_console_options.cpp")
-target_include_directories(console_options PUBLIC
-  "${app}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
-target_link_libraries(console_options PUBLIC dozer_media_vendor::headers)
-
-add_library(console_protocols STATIC
-  "${protocols}/vehicle/generated/rtc_vehicle.pb.c"
-  "${protocols}/vehicle/src/vehicle_control_protocol.cpp"
-  "${protocols}/vision/src/view_control_protocol.cpp")
-target_include_directories(console_protocols PUBLIC
-  "${protocols}/vehicle/include" "${protocols}/vehicle/generated"
-  "${protocols}/vision/include")
-target_link_libraries(console_protocols PUBLIC dozer_media_vendor::nanopb)
+target_include_directories(console_options PUBLIC "${app}")
+target_link_libraries(console_options PUBLIC dozer_rtc_common::dozer_rtc_common)
 
 add_library(console_support STATIC
-  src/runtime/process_runtime.cpp
   "${app}/video_composite_layout.cpp"
   "${app}/video_detection_overlay.cpp"
   "${app}/video_view_state.cpp"
   "${app}/vehicle_control_sender.cpp"
   "${app}/vehicle_state_log_limiter.cpp")
-target_link_libraries(console_support PUBLIC console_options console_protocols
+target_link_libraries(console_support PUBLIC console_options
   dozer_rtc_sdk::vtsrtc Threads::Threads dozer_media_vendor::yuv)
 
-include(../protocols/fused_detection.cmake)
 add_executable(rtc_console "${app}/main.cpp")
-target_link_libraries(rtc_console PRIVATE console_support fused_detection_protocol dozer_audio::dozer_audio
+target_link_libraries(rtc_console PRIVATE console_support dozer_audio::dozer_audio
   imgui::imgui OpenGL::GL ${CMAKE_DL_LIBS})
 target_compile_definitions(rtc_console PRIVATE DOZER_RTC_HAS_VIDEO_DELAY_STATS=1)
 include(../../../cmake/rtc_runtime.cmake)
@@ -63,7 +51,6 @@ if(BUILD_TESTING)
   endfunction()
   console_test(rtc_console_options_tests test/rtc_console_options_tests.cpp)
   console_test(rtc_console_fused_detection_tests test/fused_detection_tests.cpp)
-  target_link_libraries(rtc_console_fused_detection_tests PRIVATE fused_detection_protocol)
   console_test(rtc_console_vehicle_control_sender_tests test/vehicle_control_sender_tests.cpp)
   console_test(rtc_console_vehicle_state_log_tests test/vehicle_state_log_limiter_tests.cpp)
   console_test(rtc_console_video_view_state_tests test/video_view_state_tests.cpp)

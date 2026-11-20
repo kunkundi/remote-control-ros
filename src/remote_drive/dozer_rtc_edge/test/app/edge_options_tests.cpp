@@ -152,7 +152,7 @@ void TestValidConfig() {
       "load audio input topic");
   Check(options.audio.output_device == "USB speaker",
         "load audio output device");
-  Check(options.camera.capture.left_device == "/dev/video4",
+  Check(options.camera.left_device == "/dev/video4",
         "load left camera");
   Check(options.surround_camera.front_device == "/dev/video6",
         "load surround front camera");
@@ -168,8 +168,8 @@ void TestRepositoryConfig() {
   const rtc_edge_app::EdgeOptions options =
       rtc_edge_app::LoadEdgeOptions("rtc.cfg");
   Check(!options.rtc.room_id.empty(), "load repository room");
-    Check(options.camera.capture.left_device == "/dev/video0" &&
-      options.camera.capture.right_device == "/dev/video1",
+    Check(options.camera.left_device == "/dev/video0" &&
+      options.camera.right_device == "/dev/video1",
       "load repository stereo devices");
     Check(options.surround_camera.front_device == "/dev/video2" &&
       options.surround_camera.rear_device == "/dev/video3" &&
@@ -394,8 +394,8 @@ void TestInvalidDogSpeed() {
 int main(int argc, char** argv) {
   if (argc == 2 && std::string(argv[1]) == "--check-default-config") {
     const auto options = rtc_edge_app::ParseEdgeArgs(1, argv);
-        Check(options.camera.capture.left_device == "/dev/video0" &&
-          options.camera.capture.right_device == "/dev/video1",
+        Check(options.camera.left_device == "/dev/video0" &&
+          options.camera.right_device == "/dev/video1",
           "default config resolves beside executable");
         Check(options.surround_camera.rear_device == "/dev/video3",
           "default config resolves referenced edge config");

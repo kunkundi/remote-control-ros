@@ -164,8 +164,8 @@ int main(int argc, char** argv) {
           rtc_edge::SingleCameraStreamingModule single(single_options);
           CheckIdleStreaming(single);
           rtc_edge::DualCameraStreamingModuleOptions stereo_options;
-          stereo_options.capture.left_device = "/rtc_test/stream_left";
-          stereo_options.capture.right_device = "/rtc_test/stream_right";
+          stereo_options.left_device = "/rtc_test/stream_left";
+          stereo_options.right_device = "/rtc_test/stream_right";
           rtc_edge::DualCameraStreamingModule stereo(stereo_options);
           CheckIdleStreaming(stereo);
         }

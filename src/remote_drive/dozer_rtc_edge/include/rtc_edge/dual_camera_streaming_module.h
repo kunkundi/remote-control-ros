@@ -1,16 +1,8 @@
 #pragma once
 
-#include "rtc_camera/dual/async_image_source.h"
-
-#include <chrono>
+#include <cstdint>
 #include <memory>
 #include <string>
-
-namespace rtc_camera {
-namespace dual {
-class DualUyvyFrameConverter;
-}  // 命名空间 dual
-}  // 命名空间 rtc_camera
 
 namespace rtc_runtime {
 class RtcSession;
@@ -22,7 +14,8 @@ class RosImageSource;
 class DirectImageSource;
 
 struct DualCameraStreamingModuleOptions {
-  rtc_camera::dual::AsyncDualCameraImageSourceOptions capture;
+  std::string left_device = "/dev/video0";
+  std::string right_device = "/dev/video1";
 };
 
 class DualCameraStreamingModule {

@@ -11,8 +11,9 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(GSTREAMER IMPORTED_TARGET gstreamer-app-1.0 gstreamer-video-1.0)
 include(../../../cmake/jetson_archive.cmake)
 dozer_extract_jetson_archive(webrtc-jetson.tar.zst webrtc)
-set(framework "${CMAKE_CURRENT_SOURCE_DIR}/../../../vendor/rtc-framework")
-set(sdk "${framework}/vtsrtc/src")
+set(vendor "${CMAKE_CURRENT_SOURCE_DIR}/../../../vendor")
+set(sdk "${CMAKE_CURRENT_SOURCE_DIR}/src")
+set(server "${CMAKE_CURRENT_SOURCE_DIR}/signaling")
 set(encoder "${sdk}/video/encode/nvidia-jetson")
 set(jetson_api "/usr/src/jetson_multimedia_api" CACHE PATH "Jetson Multimedia API")
 set(classes "${jetson_api}/samples/common/classes")
@@ -31,8 +32,8 @@ target_link_libraries(webrtc_dependencies INTERFACE "${webrtc}/lib/libwebrtc.a" 
 
 add_library(simple_web INTERFACE)
 target_compile_definitions(simple_web INTERFACE USE_STANDALONE_ASIO ASIO_STANDALONE)
-target_include_directories(simple_web INTERFACE "${framework}/third_party/Simple-Web-Server"
-  "${framework}/third_party/Simple-WebSocket-Server")
+target_include_directories(simple_web INTERFACE "${vendor}/Simple-Web-Server"
+  "${vendor}/Simple-WebSocket-Server")
 target_link_libraries(simple_web INTERFACE dozer_media_vendor::headers Threads::Threads)
 
 add_library(jetson_encoder STATIC
@@ -68,7 +69,9 @@ add_library(vtsrtc SHARED
   "${sdk}/rtc.cpp" "${sdk}/c_rtc.cpp" "${sdk}/video/encode/rtc_encoder_factory.cpp"
   "${sdk}/statistics/rtc_statistics.cpp" "${sdk}/packet/pack.cpp" "${sdk}/packet/packetizer.cpp"
   "${sdk}/packet/depacketizer.cpp")
-target_include_directories(vtsrtc PUBLIC "$<BUILD_INTERFACE:${sdk}>" "$<INSTALL_INTERFACE:include/vtsrtc>")
+target_include_directories(vtsrtc
+  PRIVATE "${sdk}" "${server}"
+  PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/vtsrtc>" "$<INSTALL_INTERFACE:include/vtsrtc>")
 target_link_libraries(vtsrtc PRIVATE simple_web jetson_encoder)
 target_compile_definitions(vtsrtc PRIVATE ENABLE_ENCODE_PERF_STATS=0)
 if(GSTREAMER_FOUND)
@@ -78,21 +81,23 @@ if(GSTREAMER_FOUND)
 endif()
 set_target_properties(vtsrtc PROPERTIES OUTPUT_NAME vtsrtc.aarch64
   CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON
-  LINK_DEPENDS "${framework}/vtsrtc/vtsrtc.map")
-target_link_options(vtsrtc PRIVATE "LINKER:--exclude-libs,ALL" "LINKER:--version-script=${framework}/vtsrtc/vtsrtc.map" "LINKER:-z,defs")
+  LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/vtsrtc.map")
+target_link_options(vtsrtc PRIVATE "LINKER:--exclude-libs,ALL" "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/vtsrtc.map" "LINKER:-z,defs")
 install(TARGETS vtsrtc EXPORT export_vtsrtc LIBRARY DESTINATION lib)
-install(FILES "${sdk}/c_rtc.h" DESTINATION include/vtsrtc)
+install(FILES include/vtsrtc/c_rtc.h DESTINATION include/vtsrtc)
 install(FILES "${webrtc}/LICENSE.md" DESTINATION share/${PROJECT_NAME}/licenses)
+foreach(web_library IN ITEMS Simple-Web-Server Simple-WebSocket-Server)
+  install(FILES "${vendor}/${web_library}/LICENSE" DESTINATION share/${PROJECT_NAME}/licenses/${web_library})
+endforeach()
 ament_export_targets(export_vtsrtc HAS_LIBRARY_TARGET)
 
-set(server "${framework}/signaling-server/src")
 add_executable(signaling-server "${server}/main.cpp" "${server}/http_controller.cpp" "${server}/ws_controller.cpp"
   "${server}/log_manager.cpp" "${server}/openssl_sha1_compat.cpp")
 target_compile_features(signaling-server PRIVATE cxx_std_17)
 target_link_libraries(signaling-server PRIVATE simple_web OpenSSL::SSL OpenSSL::Crypto)
 install(TARGETS signaling-server DESTINATION lib/${PROJECT_NAME})
-install(DIRECTORY "${framework}/test_data/web" DESTINATION share/${PROJECT_NAME} COMPONENT Runtime)
-install(FILES "${framework}/test_data/signaling-server.cfg" DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY "${server}/web" DESTINATION share/${PROJECT_NAME} COMPONENT Runtime)
+install(FILES "${server}/signaling-server.cfg" DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   enable_testing()
@@ -100,17 +105,26 @@ if(BUILD_TESTING)
   add_executable(rtc_loopback_peer test/loopback_peer.cpp)
   target_link_libraries(rtc_loopback_peer PRIVATE vtsrtc Threads::Threads)
   add_test(NAME rtc_loopback COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test/loopback_test.py"
-    "$<TARGET_FILE:signaling-server>" "$<TARGET_FILE:rtc_loopback_peer>" "${framework}/test_data/web")
+    "$<TARGET_FILE:signaling-server>" "$<TARGET_FILE:rtc_loopback_peer>" "${server}/web")
   set_tests_properties(rtc_loopback PROPERTIES TIMEOUT 60 LABELS hardware)
-  set(tests "${framework}/vtsrtc/tests")
-  add_executable(rtc_video_delay_tests "${tests}/rtc_video_delay_tests.cpp")
+  add_executable(rtc_video_delay_tests test/rtc_video_delay_tests.cpp)
   target_include_directories(rtc_video_delay_tests PRIVATE "${sdk}")
   target_compile_options(rtc_video_delay_tests PRIVATE -UNDEBUG)
   add_test(NAME rtc_video_delay_tests COMMAND rtc_video_delay_tests)
-  add_executable(rtc_video_delay_abi_tests "${tests}/rtc_video_delay_abi_tests.cpp")
+  add_executable(rtc_video_delay_abi_tests test/rtc_video_delay_abi_tests.cpp)
   target_link_libraries(rtc_video_delay_abi_tests PRIVATE vtsrtc)
   add_test(NAME rtc_video_delay_abi_tests COMMAND rtc_video_delay_abi_tests)
-  add_executable(rtc_jetson_h264_encoder_integration_tests "${tests}/rtc_jetson_h264_encoder_integration_tests.cpp"
+  foreach(name IN ITEMS data_channel_observer_tests rtc_external_audio_device_tests)
+    add_executable(${name} test/${name}.cpp)
+    target_include_directories(${name} PRIVATE "${sdk}")
+    target_link_libraries(${name} PRIVATE webrtc_dependencies)
+    add_test(NAME ${name} COMMAND ${name})
+  endforeach()
+  add_executable(rtc_jetson_encoder_switch_benchmark EXCLUDE_FROM_ALL
+    test/rtc_jetson_encoder_switch_benchmark.cpp "${sdk}/log/log_manager.cpp")
+  target_include_directories(rtc_jetson_encoder_switch_benchmark PRIVATE "${sdk}")
+  target_link_libraries(rtc_jetson_encoder_switch_benchmark PRIVATE jetson_encoder)
+  add_executable(rtc_jetson_h264_encoder_integration_tests test/rtc_jetson_h264_encoder_integration_tests.cpp
     "${sdk}/log/log_manager.cpp")
   target_include_directories(rtc_jetson_h264_encoder_integration_tests PRIVATE "${sdk}")
   target_link_libraries(rtc_jetson_h264_encoder_integration_tests PRIVATE jetson_encoder)

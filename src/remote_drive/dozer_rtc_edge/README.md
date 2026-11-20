@@ -1,38 +1,23 @@
 # dozer_rtc_edge
 
-独立远程驾驶边缘端应用，源码从 `rtc-framework/client` 移植，使用本工作空间的 colcon/ament_cmake 编译，不调用 xmake。位于 `src/remote_drive/`，不属于纯通信层。移植代码按本包职责组织，不再保留上游的应用/模块目录套层。
+车端应用负责相机输入、RTC 收发和共享内存图像输出，在本工作空间内使用 colcon 和 ament_cmake 构建。
 
 ## 目录结构
 
 ```text
 dozer_rtc_edge/
-|-- CMakeLists.txt
-|-- package.xml
-|-- README.md
-|-- include/
-|   |-- dozer_rtc_edge/    # ROS 图像输入与 SDK 配置适配
-|   `-- rtc_*/            # 移植模块头文件，保留原有包含路径
-|-- src/
-|   |-- app/              # 主入口、应用编排、参数、视频发送规划
-|   |-- ros/              # ROS 图像、音频输入与日志实现
-|   |-- runtime/          # 进程生命周期与 RTC 会话
-|   |-- vehicle/          # 车辆控制接口与安全看门狗
-|   |-- dog/              # 可选指令转发
-|   |-- protocols/        # 控制与视觉协议编解码
-|   `-- vision/           # 保留的本地视觉实现，当前不参与构建
-|-- protocols/
-|   |-- vehicle/          # schema/ 定义与 generated/ nanopb 代码
-|   `-- vision/           # schema/ 定义与 generated/ nanopb 代码
-|-- test/                 # 按 app、ros、vehicle、protocols 等职责组织
-`-- docs/upstream/        # 移植来源的参考说明，不作为当前构建入口
+├── include/          # ROS 适配、相机采集与车端模块头文件
+├── src/
+│   ├── app/          # 入口、参数及视频发送规划
+│   ├── camera/       # V4L2 采集、异步单路帧源与 CUDA 像素转换
+│   ├── ros/          # 图像与音频输入、双目拼接、共享内存与日志
+│   ├── runtime/      # 车端 RTC 会话
+│   ├── vehicle/      # 车辆控制与看门狗
+│   └── dog/          # 可选指令转发
+└── test/             # 相机、ROS、协议和业务回归测试
 ```
 
-应用私有头文件与入口放在 `src/app/`，跨模块头文件统一放在 `include/`。
-保留 `rtc_runtime/...` 等包含路径和命名空间，避免目录调整波及业务接口。
-协议定义与生成文件成组保存，不手工修改 nanopb 生成代码；编解码实现和测试分别
-位于 `src/protocols/` 与 `test/protocols/`。原先未启用的移植源码和测试仍保留，
-实际构建与执行范围以 `CMakeLists.txt` 为准。
-运行配置继续集中在 `dozer_bringup/config/rtc_edge/`，不在本包复制维护另一份源配置。
+收发两端通过 `dozer_rtc_common` 共用车辆协议、视图切换、融合检测和进程工具。运行配置位于 `dozer_bringup/config/rtc_edge/`。
 
 音频设备枚举、PCM 采集与播放由 `src/drivers/dozer_audio/` 独立驱动包提供。
 采集由独立 `audio_capture_node` 负责，本包只订阅 PCM 话题、发送 RTC 音频和编排远端播放，不再打开录音设备、直接编译音频设备实现或查找 SDL3。
@@ -41,7 +26,7 @@ dozer_rtc_edge/
 
 ## 相机直采与共享内存
 
-默认由 edge 独占 `/dev/video0` 至 `/dev/video5`，依次为前左、前右、前、后、左、右；这是沿用的配置映射，物理方向仍需核对。不要同时启动 `dozer_camera_gmsl` 或其他采集程序。复用仓库内 `vendor/rtc-framework` 的 V4L2 异步采集和单目 CUDA 转换实现，接受 YUYV/UYVY/NV12，采集请求为 1920x1080，转换为 I420 后用 libyuv 缩至每路 640x360。目标为设备的 30 FPS，不补帧，不承诺处理或 console 接收达到 30 FPS。
+默认由 edge 独占 `/dev/video0` 至 `/dev/video5`，依次为前左、前右、前、后、左、右；这是沿用的配置映射，物理方向仍需核对。不要同时启动 `dozer_camera_gmsl` 或其他采集程序。`src/camera/` 的 V4L2 异步采集和单路 CUDA 转换，接受 YUYV/UYVY/NV12，采集请求为 1920x1080，转换为 I420 后用 libyuv 缩至每路 640x360。目标为设备的 30 FPS，不补帧，不承诺处理或 console 接收达到 30 FPS。
 
 采集/转换线程与 RTC 发送线程分离：没有 console、没有选择视图时仍持续采集。双目直接拼接 I420 平面为 1280x360，配对容差 30 ms，旧帧丢弃；环视网格为 640x360。默认视频热路径没有 ROS 图像序列化，也没有 BGR 往返转换；YOLO/预览按需在消费端把 I420 转成 BGR。仍有转换、缩放与共享内存快照拷贝，不是 DMA-BUF 或端到端零拷贝。
 
@@ -64,7 +49,7 @@ colcon test-result --verbose
 
 ## 运行
 
-直采使用仓库内 `vendor/rtc-framework/client/modules/camera/src` 的 V4L2 和 CUDA 实现。默认 CUDA 架构为 Orin 的 87，可用 `-DCMAKE_CUDA_ARCHITECTURES=...` 覆盖；找不到 nvcc 时指定 `-DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc`。
+默认 CUDA 架构为 Orin 的 87，可用 `-DCMAKE_CUDA_ARCHITECTURES=...` 覆盖；找不到 nvcc 时指定 `-DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc`。
 
 先确认没有其他进程占用相机。启用音频输入时，另一个终端启动 `ros2 launch dozer_bringup audio.launch.py`，或使用根目录 `./start_edge.sh`。确认集中配置的信令地址及 ICE 配置适用于当前部署。单独启动 edge：
 
@@ -100,7 +85,7 @@ ros2 run dozer_rtc_edge rtc_edge --config "$PWD/src/system/dozer_bringup/config/
 
 本地 YOLO 已从 edge 和 console 移除。`dozer_perception` 仍负责视觉检测，`dozer_fusion` 在 `/perception/fused_detections` 发布 `dozer_msgs/msg/FusedDetectionArray`。edge 按 `source_id` 保留每路最新待发快照，在打开的 `perception.fused.v1` DataChannel 上按设备发送；通道无序、不重传，单包上限为 16 KiB，超限丢弃整包，不影响车辆控制协议。
 
-两端构建均需要 `libprotobuf-dev` 和 `protobuf-compiler`，通过同一个 `src/remote_drive/protocols/fused_detection.proto` 生成 C++ 类型。该通道使用独立序号丢弃乱序包，同时保留 ROS 原始时间戳、`frame_seq`、坐标系和全部目标字段。升级时需同步部署 edge 和 console；车辆控制仍使用原 nanopb 协议。
+`dozer_rtc_common` 使用 protobuf 编译器从 `protocols/fused_detection.proto` 生成 C++ 类型，两端链接同一份协议库。该通道使用独立序号丢弃乱序包，同时保留 ROS 原始时间戳、`frame_seq`、坐标系和全部目标字段。升级时需同步部署 edge 和 console；车辆控制仍使用原 nanopb 协议。
 
 现场启动后，可先用 `ros2 topic echo /perception/fused_detections --once` 确认 ROS 侧已有数据，再让两端进入同一 RTC 房间，观察对应相机叠框。仅启动 edge 不会启动感知节点或生成检测数据。
 

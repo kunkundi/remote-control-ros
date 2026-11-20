@@ -85,18 +85,18 @@ DualCameraStreamingModule::~DualCameraStreamingModule() { Stop(); }
 bool DualCameraStreamingModule::Start(std::string* error_message) {
   if (started_) { return true; }
   try {
-    const bool direct_left = options_.capture.left_device.find("/dev/video") == 0;
-    const bool direct_right = options_.capture.right_device.find("/dev/video") == 0;
+    const bool direct_left = options_.left_device.find("/dev/video") == 0;
+    const bool direct_right = options_.right_device.find("/dev/video") == 0;
     if (direct_left != direct_right) {
       throw std::invalid_argument("Stereo inputs must use the same capture backend");
     }
     if (direct_left) {
       direct_source_ = std::make_unique<DirectImageSource>(
-          std::vector<std::string>{options_.capture.left_device, options_.capture.right_device},
+          std::vector<std::string>{options_.left_device, options_.right_device},
           std::vector<std::string>{"front_left", "front_right"});
     } else {
       ros_source_ = std::make_unique<RosImageSource>(std::vector<std::string>{
-          options_.capture.left_device, options_.capture.right_device});
+          options_.left_device, options_.right_device});
     }
     started_ = true;
     return true;

@@ -303,9 +303,9 @@ EdgeOptions LoadEdgeOptions(const std::string& config_path) {
         ReadString(audio, "output_device", "edge.audio");
   }
 
-  options.camera.capture.left_device =
+  options.camera.left_device =
       ReadString(camera, "left_device", "edge.stereo_camera");
-  options.camera.capture.right_device =
+  options.camera.right_device =
       ReadString(camera, "right_device", "edge.stereo_camera");
 
   options.surround_camera.front_device = ReadStringAllowEmpty(

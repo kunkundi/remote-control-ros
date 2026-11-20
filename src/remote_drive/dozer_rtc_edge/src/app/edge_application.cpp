@@ -158,12 +158,10 @@ constexpr const char* kEdgeAudioSourceId = "edge_audio";
 rtc_edge::SingleCameraStreamingModuleOptions MakeSurroundCameraOptions(
     const std::string& device,
     const char* video_source_id,
-    const char* camera_name,
     std::function<bool(RtcSession*, const rtc_camera::single::ConvertedCameraFrame&)> handler) {
   rtc_edge::SingleCameraStreamingModuleOptions options;
   options.capture.device = device;
   options.video_source_id = video_source_id;
-  options.camera_name = camera_name;
   options.frame_handler = std::move(handler);
   return options;
 }
@@ -180,20 +178,19 @@ class EdgeCameraModules {
         stereo_camera_(options.camera),
         front_camera_(MakeSurroundCameraOptions(
             options.surround_camera.front_device,
-            rtc_edge::kSurroundFrontVideoSourceId, "surround front camera",
+            rtc_edge::kSurroundFrontVideoSourceId,
             [this](RtcSession* session, const rtc_camera::single::ConvertedCameraFrame& frame) { return SubmitSurround(session, frame, 0); })),
         rear_camera_(MakeSurroundCameraOptions(
             options.surround_camera.rear_device,
-            rtc_edge::kSurroundRearVideoSourceId, "surround rear camera",
+            rtc_edge::kSurroundRearVideoSourceId,
             [this](RtcSession* session, const rtc_camera::single::ConvertedCameraFrame& frame) { return SubmitSurround(session, frame, 1); })),
         left_camera_(MakeSurroundCameraOptions(
             options.surround_camera.left_device,
-            rtc_edge::kSurroundLeftVideoSourceId, "surround left camera",
+            rtc_edge::kSurroundLeftVideoSourceId,
             [this](RtcSession* session, const rtc_camera::single::ConvertedCameraFrame& frame) { return SubmitSurround(session, frame, 2); })),
         right_camera_(MakeSurroundCameraOptions(
             options.surround_camera.right_device,
             rtc_edge::kSurroundRightVideoSourceId,
-            "surround right camera",
             [this](RtcSession* session, const rtc_camera::single::ConvertedCameraFrame& frame) { return SubmitSurround(session, frame, 3); })) {
     grid_frame_.assign(640 * 360 * 3 / 2, 128);
     std::fill(grid_frame_.begin(), grid_frame_.begin() + 640 * 360, 16);
