@@ -99,6 +99,15 @@ if(BUILD_TESTING)
   add_test(NAME rtc_edge_default_config_tests COMMAND rtc_edge_options_tests --check-default-config)
   set_tests_properties(rtc_edge_default_config_tests PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/no_config")
   edge_test(rtc_edge_streaming_tests ${app}/video_send_planner.cpp test/app/video_send_planner_tests.cpp)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_executable(rtc_edge_reconnect_receiver test/app/reconnect_receiver.cpp)
+  target_link_libraries(rtc_edge_reconnect_receiver PRIVATE dozer_rtc_sdk::vtsrtc
+    dozer_rtc_common::dozer_rtc_common Threads::Threads)
+  add_test(NAME rtc_edge_reconnect COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/test/app/edge_reconnect_test.py"
+    "$<TARGET_FILE:rtc_edge>" "$<TARGET_FILE:rtc_edge_reconnect_receiver>")
+  set_tests_properties(rtc_edge_reconnect PROPERTIES TIMEOUT 60
+    ENVIRONMENT "ROS_DOMAIN_ID=184;ROS_LOCALHOST_ONLY=1")
   edge_test(rtc_vehicle_control_protocol_tests test/protocols/vehicle/vehicle_control_protocol_tests.cpp)
   edge_test(dog_command_forwarder_tests test/dog/dog_command_forwarder_tests.cpp)
   set_tests_properties(dog_command_forwarder_tests PROPERTIES TIMEOUT 30)

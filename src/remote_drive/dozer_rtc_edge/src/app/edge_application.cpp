@@ -390,7 +390,7 @@ class EdgeCameraModules {
   bool SubmitSurround(RtcSession* session,
                       const rtc_camera::single::ConvertedCameraFrame& frame,
                       size_t index) {
-    std::lock_guard<std::mutex> lock(video_view_mutex_);
+    std::unique_lock<std::mutex> lock(video_view_mutex_);
     using vts_rtc::vision::ViewMode;
     const bool grid = enabled_view_ == ViewMode::Binocular || enabled_view_ == ViewMode::Surround;
     if (!grid && static_cast<uint32_t>(enabled_view_) != index + 3) {
@@ -398,9 +398,9 @@ class EdgeCameraModules {
     }
     const int width = grid ? 640 : 1280;
     const int height = grid ? 360 : 720;
-    std::vector<uint8_t> single;
-    if (!grid) single.resize(width * height * 3 / 2);
-    uint8_t* output = grid ? grid_frame_.data() : single.data();
+    std::vector<uint8_t> send_frame;
+    if (!grid) send_frame.resize(width * height * 3 / 2);
+    uint8_t* output = grid ? grid_frame_.data() : send_frame.data();
     const int offset_x = grid ? static_cast<int>(index % 2) * 320 : 0;
     const int offset_y = grid ? static_cast<int>(index / 2) * 180 : 0;
     if (libyuv::I420Scale(frame.data, frame.stride_y,
@@ -420,12 +420,15 @@ class EdgeCameraModules {
                          (!left_enabled_ || grid_updated_[2]) &&
                          (!right_enabled_ || grid_updated_[3]);
       if (!ready) return true;
+      send_frame = grid_frame_;
       grid_updated_.fill(false);
     }
+    // RTC 同步发送时，断线回调可能正等待同一把锁。发送缓冲区由本次调用独占。
+    lock.unlock();
     const char* sources[] = {rtc_edge::kSurroundFrontVideoSourceId, rtc_edge::kSurroundRearVideoSourceId,
                              rtc_edge::kSurroundLeftVideoSourceId, rtc_edge::kSurroundRightVideoSourceId};
-    return session->SendI420Frame(grid ? "surround_grid" : sources[index], output,
-                                 width * height * 3 / 2, width, height, width, width / 2, width / 2);
+    return session->SendI420Frame(grid ? "surround_grid" : sources[index], send_frame.data(),
+                                 send_frame.size(), width, height, width, width / 2, width / 2);
   }
 
   struct CameraWorkerState {
