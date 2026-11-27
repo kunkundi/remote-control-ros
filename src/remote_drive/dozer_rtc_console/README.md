@@ -20,12 +20,12 @@ Windows 不需要 ROS、ament、colcon 或 Jetson 开发环境。编译需要 CU
 默认位置为 `vendor/windows/webrtc-win/` 和 `vendor/windows/Video_Codec_SDK_11.0.10/`，也可以指定其它目录。
 不能使用 Jetson 的 `.a` 库或任意版本的 WebRTC：头文件和 `webrtc.lib` 必须匹配本项目使用的接口与 ABI。
 
-在工作空间根目录的 PowerShell 中执行：
+在工作空间根目录双击 `build_rtc_console.bat`，或在 PowerShell 中执行 `build_rtc_console.ps1`。两个入口接受相同参数：
 
 ```powershell
-.\src\remote_drive\dozer_rtc_console\build_windows.ps1
+.\build_rtc_console.ps1
 # 开发包在其它位置时：
-.\src\remote_drive\dozer_rtc_console\build_windows.ps1 -WebRtcRoot D:\deps\webrtc-win -NvCodecRoot D:\deps\Video_Codec_SDK_11.0.10
+.\build_rtc_console.ps1 -WebRtcRoot D:\deps\webrtc-win -NvCodecRoot D:\deps\Video_Codec_SDK_11.0.10
 .\install\windows-console\bin\rtc_console.exe --help
 .\install\windows-console\bin\rtc_console.exe
 ```
