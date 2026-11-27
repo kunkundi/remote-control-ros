@@ -207,68 +207,43 @@ bool RtcConnectionManager::InitPeerConnectionFactory() {
 }
 
 void RtcConnectionManager::DestroyAllPeerConnection() {
-  mtx_.lock();
-  for (const auto& it : remotesessionid_rtcconn_map_) {
-    if (it.second->peer_conn_) {
-      LOG_WARN("Close peer connection <%d>", it.first);
-      if (rtc_config_.netstats_report) {
-        stats_report_thread_->PostTask(RTC_FROM_HERE, [this]() {
-          if (stats_report_timer_) stats_report_timer_->cancel();
-        });
-      }
-      statistics_collector_->Reset();
-
-      if (webrtc_log_hook_) {
-        delete webrtc_log_hook_;
-        webrtc_log_hook_ = nullptr;
-      }
-
-      it.second->peer_conn_->Close();
-      it.second->peer_conn_ = nullptr;
-#if defined __aarch64__
-      // if(rtc_config_.encode_params.use_codec_pool)
-      // 	CodecPool::GetInstance()->Destroy();
-#endif
-    }
+  for (auto id : QueryRemoteAgents()) {
+    DestroyPeerConnection(id);
   }
-  remotesessionid_rtcconn_map_.clear();
-  mtx_.unlock();
+  statistics_collector_->Reset();
 }
 
 void RtcConnectionManager::DestroyPeerConnection(
     vts_rtc::SessionId remote_sessionid) {
-  mtx_.lock();
-  for (auto it = remotesessionid_rtcconn_map_.begin();
-       it != remotesessionid_rtcconn_map_.end();) {
-    if (it->first == remote_sessionid) {
-      if (it->second->peer_conn_) {
-        LOG_WARN("Close peer connection <%d><%p>", it->first,
-                 it->second->peer_conn_.get());
-        if (rtc_config_.netstats_report) {
-          stats_report_thread_->PostTask(RTC_FROM_HERE, [this]() {
-            if (stats_report_timer_) stats_report_timer_->cancel();
-          });
-        }
-        statistics_collector_->RemoveSessionMediaSsrcVsId(remote_sessionid);
+  std::shared_ptr<RtcConnection> connection;
+  {
+    std::lock_guard<std::mutex> lock(mtx_);
+    auto it = remotesessionid_rtcconn_map_.find(remote_sessionid);
+    if (it == remotesessionid_rtcconn_map_.end()) return;
+    connection = std::move(it->second);
+    remotesessionid_rtcconn_map_.erase(it);
+  }
 
-        if (webrtc_log_hook_) {
-          delete webrtc_log_hook_;
-          webrtc_log_hook_ = nullptr;
-        }
+  LOG_WARN("Close peer connection <%d>", remote_sessionid);
+  statistics_collector_->RemoveSessionMediaSsrcVsId(remote_sessionid);
+  if (webrtc_log_hook_) {
+    delete webrtc_log_hook_;
+    webrtc_log_hook_ = nullptr;
+  }
+  connection->peer_conn_->Close();
+  connection->peer_conn_ = nullptr;
 
-        it->second->peer_conn_->Close();
-        it->second->peer_conn_ = nullptr;
-#if defined __aarch64__
-        // if (rtc_config_.encode_params.use_codec_pool)
-        // 	CodecPool::GetInstance()->Destroy();
-#endif
-      }
-      remotesessionid_rtcconn_map_.erase(it++);
-    } else {
-      it++;
+  // Close queues WebRTC observer events. Report the retirement now, before
+  // another connection can reuse this session id.
+  if (datachannel_state_handler_) {
+    for (const auto& channel : connection->label_datachannel_map_) {
+      datachannel_state_handler_(remote_sessionid, channel.first,
+                                 vts_rtc::DataChannelState::Closed);
     }
   }
-  mtx_.unlock();
+  if (P2P_state_handler_) {
+    P2P_state_handler_(remote_sessionid, vts_rtc::P2PState::Closed);
+  }
 }
 
 void RtcConnectionManager::InitWebsocket() {
@@ -313,8 +288,9 @@ void RtcConnectionManager::InitWebsocket() {
     }
   };
 
+  std::weak_ptr<RtcConnectionManager> weak_self = shared_from_this();
   ws_client_
-      ->on_message = [this](WsConnection conn,
+      ->on_message = [this, weak_self](WsConnection conn,
                             std::shared_ptr<WsClient::InMessage> in_message) {
     // websocket-client线程（对应ws_client_thread_实例）
     auto msg_json = json::parse(in_message->string(), nullptr, false);
@@ -372,15 +348,21 @@ void RtcConnectionManager::InitWebsocket() {
         auto type = msg_json["type"].get<std::string>();
         auto roomid = msg_json["roomid"].get<std::string>();
 
-        if (room_handler_) {
-          logic_thread_->PostTask(RTC_FROM_HERE, [this, type, roomid]() {
-            if (type == "new") {
-              room_handler_(vts_rtc::RoomOperation::New, roomid);
-            } else if (type == "delete") {
-              room_handler_(vts_rtc::RoomOperation::Delete, roomid);
+        logic_thread_->PostTask(RTC_FROM_HERE, [weak_self, type, roomid]() {
+          auto self = weak_self.lock();
+          if (!self) return;
+          if (type == "delete") {
+            if (self->active_room_ && *self->active_room_ == roomid) {
+              self->active_room_.reset();
+              self->DestroyAllPeerConnection();
             }
-          });
-        }
+            if (self->room_handler_) {
+              self->room_handler_(vts_rtc::RoomOperation::Delete, roomid);
+            }
+          } else if (type == "new" && self->room_handler_) {
+            self->room_handler_(vts_rtc::RoomOperation::New, roomid);
+          }
+        });
       }
     } else if (command == "take_configuration") {
       if (!msg_json.contains("type")) {
@@ -517,6 +499,7 @@ void RtcConnectionManager::ReconnectWebsocket() {
 
     logic_thread_->PostTask(RTC_FROM_HERE, [this]() {
       // remove p2p connections when WebSocket disconnected
+      active_room_.reset();
       DestroyAllPeerConnection();
 
       if (serverconnection_state_handler_) {
@@ -748,6 +731,9 @@ vts_rtc::ErrorCode RtcConnectionManager::OpenRoom(
     LOG_INFO("Http client open room, error code: %d, error message: %s", status,
              message.c_str());
 
+    if (status_code == HttpStatus::OK) {
+      active_room_ = roomid;
+    }
     return ConvertHttpCode(status_code);
   } catch (const SimpleWeb::system_error& e) {
     LOG_ERROR("Http client open room occurs error: %s", e.what());
@@ -835,6 +821,7 @@ vts_rtc::ErrorCode RtcConnectionManager::JoinRoom(
              message.c_str());
 
     if (status == HttpStatus::OK) {
+      active_room_ = roomid;
       json data_obj = result_obj[HttpStatus::data_field];
       auto room = data_obj.get<vts_rtc::Room>();
       switch (room.room_type) {
@@ -895,6 +882,7 @@ vts_rtc::ErrorCode RtcConnectionManager::LeaveRoom() {
              status, message.c_str());
 
     if (status == HttpStatus::OK) {
+      active_room_.reset();
       DestroyAllPeerConnection();
     }
 
@@ -1616,10 +1604,13 @@ void RtcConnectionManager::InteractRemotePeer(
     rtc_conn =
         std::make_shared<RtcConnection>(*current_sessionid_, remote_sessionid);
   }
+  // A new offer can reuse the signaling session id of a previous transport.
+  DestroyPeerConnection(remote_sessionid);
   rtc_conn->InitObserverCallbacks();
   std::weak_ptr<RtcConnectionManager> weak_self = shared_from_this();
 
-  rtc_conn->on_P2P_state_changed_ = [this, rtc_conn, weak_self](
+  std::weak_ptr<RtcConnection> weak_connection = rtc_conn;
+  rtc_conn->on_P2P_state_changed_ = [this, weak_connection, weak_self](
                                         vts_rtc::SessionId remote_sessionid,
                                         vts_rtc::P2PState state) {
     RTC_DCHECK_RUN_ON(logic_thread_);
@@ -1631,11 +1622,18 @@ void RtcConnectionManager::InteractRemotePeer(
       return;
     }
 
+    auto rtc_conn = weak_connection.lock();
+    if (!rtc_conn || !rtc_conn->peer_conn_) return;
+    if (state == vts_rtc::P2PState::Closed) {
+      DestroyPeerConnection(remote_sessionid);
+      return;
+    }
+
     if (P2P_state_handler_) {
       P2P_state_handler_(remote_sessionid, state);
     }
 
-    if (state == vts_rtc::P2PState::Connected && current_sessionid_) {
+    if (state == vts_rtc::P2PState::Connected && rtc_conn->peer_conn_) {
       LOG_INFO(
           "[Stats] P2P Connected, netstats_report: %d, stats_report_inited: %d",
           rtc_config_.netstats_report, stats_report_inited_);
@@ -1676,7 +1674,7 @@ void RtcConnectionManager::InteractRemotePeer(
           //     "encodings.size()=%zu",
           //     streamids.size(), encoding_obj.size());
 
-          if (!streamids.empty() && !encoding_obj.empty()) {
+          if (!streamids.empty() && !encoding_obj.empty() && encoding_obj[0].ssrc) {
             uint32_t ssrc = encoding_obj[0].ssrc.value();
             std::string sourceid = streamids[0];
             LOG_INFO("[Stats] Registering receiver: sourceid=%s, ssrc=%u",
@@ -1695,7 +1693,7 @@ void RtcConnectionManager::InteractRemotePeer(
       }
     }
 
-    if (state == vts_rtc::P2PState::Failed) {
+    if (state == vts_rtc::P2PState::Failed && rtc_conn->peer_conn_) {
       // @attention: must run in logic thread, otherwise cannot re-create
       // PeerConnection
       LOG_WARN("P2P connection <%u> state Failed", remote_sessionid);
@@ -1704,9 +1702,11 @@ void RtcConnectionManager::InteractRemotePeer(
   };
 
   rtc_conn->on_net_stats_report_ =
-      [this, remote_sessionid, weak_self](
+      [remote_sessionid, weak_self](
           const rtc::scoped_refptr<const webrtc::RTCStatsReport>& report) {
-        statistics_collector_->OnStatisticsReport(remote_sessionid, report);
+        if (auto self = weak_self.lock()) {
+          self->statistics_collector_->OnStatisticsReport(remote_sessionid, report);
+        }
       };
 
   rtc_conn->on_sdp_create_succeed_ = [this, offer_peer](
@@ -1746,7 +1746,7 @@ void RtcConnectionManager::InteractRemotePeer(
       };
 
   // rtc_conn->on_dc_state_changed_ = datachannel_state_handler_;
-  rtc_conn->on_dc_state_changed_ = [this, remote_sessionid, weak_self](
+  rtc_conn->on_dc_state_changed_ = [this, remote_sessionid, weak_self, weak_connection](
                                        vts_rtc::SessionId sessionId,
                                        const std::string& datachannel_label,
                                        vts_rtc::DataChannelState state) {
@@ -1757,11 +1757,14 @@ void RtcConnectionManager::InteractRemotePeer(
           "but rtc connection manager has been destroyed.");
       return;
     }
+    auto connection = weak_connection.lock();
+    if (!connection || !connection->peer_conn_) return;
     // WebRTC内部不存在DataChannel的重连机制，同时本端和远端的DataChannel状态
     // 并非完全一致（存在本端DataChannel已关闭，对端1.5分钟才感知到关闭），故暂且
     // 选择关闭P2P连接来通知上层业务进行重连
     if (state == vts_rtc::DataChannelState::Closed) {
       DestroyPeerConnection(remote_sessionid);
+      return;
     }
     if (datachannel_state_handler_) {
       datachannel_state_handler_(sessionId, datachannel_label, state);

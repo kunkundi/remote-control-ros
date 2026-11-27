@@ -11,23 +11,10 @@ RtcConnectionBase::RtcConnectionBase() :
 RtcConnectionBase::~RtcConnectionBase() {
 	RTC_DCHECK_RUN_ON(logic_thread_);
 
-	// reset all observers callbacks
-	set_remote_sdp_observer_->ResetCallbacks();
-	set_sdp_observer_->ResetCallbacks();
-	create_sdp_observer_->ResetCallbacks();
-	
-	for (const auto& observer : datachannel_observers_) {
-		observer->ResetCallbacks();
-	}
-	peer_conn_observer_.ResetCallbacks();
-	rtc_channel_stats_observer_->ResetCallbacks();
-
-	// reset videosinks and audiosinks callbacks
-	for (const auto& videosink : rtc_pc_videosinks_) {
-		videosink->ResetCallbacks();
-	}
-	for (const auto& audiosink : rtc_pc_audiosinks_) {
-		audiosink->ResetCallbacks();
+	if (peer_conn_) {
+		LOG_WARN("Close peer connection");
+		peer_conn_->Close();
+		peer_conn_ = nullptr;
 	}
 
 	for (const auto& label_datachannel : label_datachannel_map_) {
@@ -38,13 +25,7 @@ RtcConnectionBase::~RtcConnectionBase() {
 		}
 	}
 
-	PackDestory();
-
-	if (peer_conn_) {
-		LOG_WARN("Close peer connection");
-		peer_conn_->Close();
-		peer_conn_ = nullptr;
-	}
+	if (bPacked_) PackDestory();
 
 	rtc_pc_videosinks_.clear();
 	rtc_pc_audiosinks_.clear();
@@ -99,6 +80,7 @@ bool RtcConnectionBase::AddDataChannel(const std::string& label,
 	}
 
 	auto datachannel = peer_conn_->CreateDataChannel(label, &datachannelinit);
+	if (!datachannel) return false;
 	label_datachannel_map_[label] = datachannel;
 
 	InitDataChannelObserverCallbacks(datachannel);
@@ -172,13 +154,15 @@ void RtcConnectionBase::InitDataChannelObserverCallbacks(
 		return;
 	}
 
-	PackInit();
+	if (bPacked_) {
+		PackInit();
 
-	label_ztchannel_map_[datachannel->label().c_str()] = (PackUserParams*)malloc(sizeof(PackUserParams));
-	label_ztchannel_map_[datachannel->label().c_str()]->packet_cb = PacketsCallback;
-	label_ztchannel_map_[datachannel->label().c_str()]->data_cb = DataCallback;
-	label_ztchannel_map_[datachannel->label().c_str()]->ptr1 = (void*)datachannel;
-	label_ztchannel_map_[datachannel->label().c_str()]->ptr2 = (void*)this;
+		label_ztchannel_map_[datachannel->label().c_str()] = (PackUserParams*)malloc(sizeof(PackUserParams));
+		label_ztchannel_map_[datachannel->label().c_str()]->packet_cb = PacketsCallback;
+		label_ztchannel_map_[datachannel->label().c_str()]->data_cb = DataCallback;
+		label_ztchannel_map_[datachannel->label().c_str()]->ptr1 = (void*)datachannel;
+		label_ztchannel_map_[datachannel->label().c_str()]->ptr2 = (void*)this;
+	}
 
 	std::weak_ptr<RtcConnectionBase> weak_self = shared_from_this();
 	// 注意：lambda的捕获是立刻发生的，而不是等到函数调用的时候
@@ -440,18 +424,11 @@ void RtcConnectionBase::InitObserverCallbacks() {
 		new rtc::RefCountedObject<CreateSessionDescriptionObserver>();
 	create_sdp_observer_->on_success_ =
 		[this, weak_self](webrtc::SessionDescriptionInterface* desc_ptr) {
+		std::unique_ptr<webrtc::SessionDescriptionInterface> desc(desc_ptr);
 		auto self = weak_self.lock();
-		if (!self) {
-			return;
-		}
-
-		if (!desc_ptr) {
-			return;
-		}
-
+		if (!self || !desc) return;
 		logic_thread_->PostTask(RTC_FROM_HERE,
-			[this, weak_self,
-				desc = std::unique_ptr<webrtc::SessionDescriptionInterface>(desc_ptr)]() mutable {
+			[this, weak_self, desc = std::move(desc)]() mutable {
 				auto self = weak_self.lock();
 				if (!self) {
 					LOG_ERROR("[WEBRTC] Create SDP on success, "

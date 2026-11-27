@@ -36,7 +36,7 @@ def run(server, peer, web, workspace):
             directory = workspace / role
             directory.mkdir()
             config = dict(api_server=endpoint, signaling_server=endpoint + '/signaling',
-                          LAN=True, use_NVENC=True, jetson_h264_encoder='jetson', use_NVDEC=False)
+                          LAN=True, netstats_report=True, use_NVENC=True, jetson_h264_encoder='jetson', use_NVDEC=False)
             (directory / 'rtc.cfg').write_text(json.dumps(config))
             children.append(subprocess.Popen([peer, role], cwd=directory))
         for process in children[1:]:

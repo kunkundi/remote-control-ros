@@ -139,6 +139,7 @@ private:
 	rtc::Thread* logic_thread_ = nullptr;
 
 	const vts_rtc::RtcConfig rtc_config_;
+	absl::optional<vts_rtc::RoomId> active_room_;  // logic thread
 
 	vts_rtc::RoomHandler room_handler_ = nullptr;
 	vts_rtc::UserHandler user_handler_ = nullptr;
