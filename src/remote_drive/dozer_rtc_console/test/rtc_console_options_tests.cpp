@@ -316,6 +316,9 @@ int main(int argc, char** argv) {
   Check(argc <= 2, "accept at most one deployment config path");
   if (argc == 2) {
     const auto config = rtc_console::LoadConfig(argv[1]);
+#if defined(_WIN32)
+    Check(config.rtc_settings.value("use_NVDEC", false), "deployed Windows config enables NVDEC");
+#endif
     Check(config.room_id == "test1", "load deployed external console config");
     Check(!config.auto_open_room, "deployed config does not automatically open a room");
     Check(!config.steering_servo_calibrated, "deployed config has no assumed servo calibration");

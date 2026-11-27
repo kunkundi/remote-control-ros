@@ -171,7 +171,11 @@ struct RtcConfig {
 	std::vector<unsigned int> codecs;
 
 	bool use_NVENC = false;
+#ifdef _WIN32
+	bool use_NVDEC = true;
+#else
 	bool use_NVDEC = false;
+#endif
 	std::string jetson_h264_encoder = "jetson";
 
 	long ping_timeout = 2000;

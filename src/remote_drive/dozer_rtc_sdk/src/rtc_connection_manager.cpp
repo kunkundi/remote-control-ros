@@ -1,6 +1,10 @@
 #include "http_status_code.hpp"
 #include "rtc_connection_manager.h"
+#if defined(_WIN32)
+#include "video/decode/nvdec_factory.h"
+#else
 #include "video/encode/rtc_encoder_factory.h"
+#endif
 
 #ifdef USE_DEFAULT_JETSON_ENCODER
 #include <modules/video_coding/codecs/nvidia/NvVideoEncoderFactory.h>
@@ -172,6 +176,12 @@ bool RtcConnectionManager::InitPeerConnectionFactory() {
           });
 
   std::unique_ptr<webrtc::VideoEncoderFactory> video_encoder_factory = nullptr;
+#if defined(_WIN32)
+  if (rtc_config_.use_NVENC) {
+    LOG_WARN("NVENC is unavailable in the Windows console SDK; use builtin encoder.");
+  }
+  video_encoder_factory = webrtc::CreateBuiltinVideoEncoderFactory();
+#else
   if (rtc_config_.use_NVENC) {
 #ifdef USE_DEFAULT_JETSON_ENCODER
     LOG_INFO("Use jetson default H264 video encoder.");
@@ -187,8 +197,15 @@ bool RtcConnectionManager::InitPeerConnectionFactory() {
     LOG_INFO("Use builtin video encoder.");
     video_encoder_factory = webrtc::CreateBuiltinVideoEncoderFactory();
   }
+#endif
 
+#if defined(_WIN32)
+  auto video_decoder_factory = rtc_config_.use_NVDEC
+      ? webrtc::CreateNvdecH264Factory() : webrtc::CreateBuiltinVideoDecoderFactory();
+  LOG_INFO("Receive video decoder: %s", rtc_config_.use_NVDEC ? "NVIDIA NVDEC H.264" : "WebRTC builtin");
+#else
   auto video_decoder_factory = webrtc::CreateBuiltinVideoDecoderFactory();
+#endif
 
   peer_conn_factory_ = webrtc::CreatePeerConnectionFactory(
       network_thread_.get(), worker_thread_.get(), signaling_thread_.get(),

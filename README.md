@@ -90,6 +90,7 @@ ros2_ws/
 它尚未完成 ROS 检测结果上传与 `/vehicle/*` 翻译，不替代规划中的 `dozer_rtc_bridge`。
 
 `dozer_rtc_console` 可以单独构建和运行。发送端和操作台都链接 `dozer_rtc_sdk::vtsrtc`，并在各自的可执行文件旁安装同一份动态库。
+Windows 10/11 x64 操作台支持 Visual Studio 2022 / CMake 独立构建，无需 ROS；使用 `src/remote_drive/dozer_rtc_console/build_windows.ps1`，依赖准备及运行步骤见下方操作台文档。
 配置集中在 `dozer_bringup/config/rtc_console/`。构建和资产交付要求见
 [src/remote_drive/dozer_rtc_console/README.md](src/remote_drive/dozer_rtc_console/README.md)。
 

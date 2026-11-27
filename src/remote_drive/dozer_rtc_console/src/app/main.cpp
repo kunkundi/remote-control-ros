@@ -22,6 +22,7 @@
 #define SDL_MAIN_HANDLED
 #endif
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
 #include <SDL3/SDL_opengl.h>
 
 #include <algorithm>
@@ -318,9 +319,9 @@ bool FileExists(const std::string& path) {
 
 std::string ExecutableDir() {
 #if defined(_WIN32)
-  char path[MAX_PATH] = {0};
-  const DWORD len = GetModuleFileNameA(nullptr, path, MAX_PATH);
-  if (len == 0 || len == MAX_PATH) {
+  char path[32768] = {0};
+  const DWORD len = GetModuleFileNameA(nullptr, path, sizeof(path));
+  if (len == 0 || len >= sizeof(path)) {
     return ".";
   }
   std::string s(path, len);
@@ -4651,6 +4652,9 @@ RtcConsoleApp* RtcConsoleApp::instance_ = nullptr;
 }  // namespace
 
 int main(int argc, char** argv) {
+#if defined(_WIN32)
+  SetConsoleOutputCP(CP_UTF8);
+#endif
   try {
     const rtc_console::AppOptions options =
         rtc_console::ParseOptions(argc, argv);
@@ -4659,6 +4663,7 @@ int main(int argc, char** argv) {
       return 0;
     }
 
+    SDL_SetMainReady();
     RtcConsoleApp app(options);
     if (!app.Init()) {
       return 1;
