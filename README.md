@@ -246,20 +246,16 @@ ROS_DOMAIN_ID=182 ROS_LOCALHOST_ONLY=1 \
 
 ### 3.4 独立 RTC Console
 
-console 不随 `start_all.sh` 或 `start_edge.sh` 启动。在工作空间根目录单独执行：
+操作台独立于车端的 `start_all.sh` 和 `start_edge.sh`。在 Jetson 图形桌面的终端进入工作空间根目录，运行以下命令。脚本自动加载 ROS 环境，工作空间尚未安装操作台时会先构建 `dozer_rtc_console` 及其依赖。
 
 ```bash
-source /opt/ros/humble/setup.bash
-colcon build --packages-up-to dozer_rtc_console --cmake-args -DCMAKE_BUILD_TYPE=Release
-source install/setup.bash
-ros2 run dozer_rtc_console rtc_console
+./start_console.sh
 ```
 
-使用源码中的集中配置，避免修改安装副本：
+操作台默认读取可执行文件旁的配置。要使用源码中的集中配置，可直接给脚本传入 `--config`。运行 `./start_console.sh --help` 可查看全部参数。
 
 ```bash
-ros2 run dozer_rtc_console rtc_console \
-  --config "$PWD/src/system/dozer_bringup/config/rtc_console/rtc.cfg"
+./start_console.sh --config src/system/dozer_bringup/config/rtc_console/rtc.cfg
 ```
 
 默认不自动打开房间，需在操作台中操作；console 和 edge 的信令服务、房间与认证设置需相互匹配。
