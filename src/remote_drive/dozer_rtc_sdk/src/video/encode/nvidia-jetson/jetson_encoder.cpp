@@ -956,16 +956,27 @@ bool JetsonEncoder::EncoderCapturePlaneDqCallback(struct v4l2_buffer* v4l2_buf,
     return false;
   }
 
-  if (!v4l2_buf || !buffer) {
+  // Only the current capture plane owns the dequeued MMAP buffer. During a
+  // stream transition, reject an inconsistent callback before reading it.
+  if (!v4l2_buf || !buffer ||
+      thiz->encoder_->capture_plane.getNthBuffer(v4l2_buf->index) != buffer) {
     thiz->abort_ = true;
     thiz->encoder_->abort();
     LOG_ERROR(
-        "[JetsonEnc][capture-dq] Failed to dequeue buffer from encoder capture "
+        "[JetsonEnc][capture-dq] Invalid dequeued buffer from encoder capture "
         "plane v4l2_buf=%p buffer=%p", v4l2_buf, buffer);
     thiz->LogQueueState("capture-dq:null-buffer");
     return false;
   }
 
+  if (buffer->n_planes == 0 || !buffer->planes[0].data ||
+      buffer->planes[0].bytesused > buffer->planes[0].length) {
+    thiz->abort_ = true;
+    thiz->encoder_->abort();
+    LOG_ERROR("[JetsonEnc][capture-dq] Invalid capture payload index=%u",
+              v4l2_buf->index);
+    return false;
+  }
   if (buffer->planes[0].bytesused == 0) {
     // 空缓冲意味着出队循环即将结束，下次送帧时需要重新创建会话。
     thiz->abort_.store(true, std::memory_order_release);
