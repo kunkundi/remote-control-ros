@@ -6,6 +6,7 @@ import sys
 import time
 from types import SimpleNamespace
 import unittest
+from unittest.mock import Mock
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
@@ -74,6 +75,41 @@ class CameraShmTests(unittest.TestCase):
         self.path.write_bytes(self.path.read_bytes()[:-1])
         with self.assertRaises(ValueError):
             self.reader.read()
+
+    def test_image_publication_follows_each_subscription(self):
+        from camera_image_publisher import CameraImagePublisher
+
+        front, rear = Mock(), Mock()
+        front.get_subscription_count.return_value = 0
+        rear.get_subscription_count.return_value = 1
+        front_reader = Mock(wraps=self.reader)
+        wrong_camera = Mock(read=Mock(return_value=SimpleNamespace(frame_id='left')))
+        node = SimpleNamespace(streams=[('rear', rear, wrong_camera),
+                                        ('front_left', front, front_reader)], get_logger=Mock())
+        CameraImagePublisher.publish_images(node)
+        front_reader.read.assert_not_called()
+        rear.publish.assert_not_called()
+
+        front.get_subscription_count.return_value = 1
+        self.write_frame()
+        CameraImagePublisher.publish_images(node)
+        image, = front.publish.call_args.args
+        self.assertEqual(image.header.frame_id, 'camera_front_left')
+        self.assertEqual((image.header.stamp.sec, image.header.stamp.nanosec), (0, 123456789))
+        self.assertEqual((image.width, image.height, image.step, image.encoding), (4, 4, 12, 'bgr8'))
+        self.assertEqual(len(image.data), 48)
+        self.assertGreater(image.data[2], 240)
+        CameraImagePublisher.publish_images(node)
+        front.publish.assert_called_once()
+
+        front.get_subscription_count.return_value = 0
+        front_reader.reset_mock()
+        self.write_frame(sequence=2)
+        CameraImagePublisher.publish_images(node)
+        front_reader.read.assert_not_called()
+        front.get_subscription_count.return_value = 1
+        CameraImagePublisher.publish_images(node)
+        self.assertEqual(front.publish.call_count, 2)
 
     def test_yolo_metadata_and_viewer_matching(self):
         import rclpy

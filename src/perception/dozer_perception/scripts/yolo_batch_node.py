@@ -11,11 +11,8 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Header
 from dozer_msgs.msg import Detection2D, Detection2DArray
-from camera_shm import CameraShmReader
+from camera_shm import CAMERA_NAMES, CameraShmReader
 from batch_predictor import BatchedDetectionPredictor
-
-
-CAMERA_NAMES = ('front_left', 'front_right', 'front', 'rear', 'left', 'right')
 
 
 class YoloBatchNode(Node):

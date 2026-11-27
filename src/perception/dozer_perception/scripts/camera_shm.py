@@ -12,6 +12,7 @@ import numpy as np
 
 
 HEADER = struct.Struct('<8sIIQQQIIII32s')
+CAMERA_NAMES = ('front_left', 'front_right', 'front', 'rear', 'left', 'right')
 
 
 @dataclass(frozen=True)

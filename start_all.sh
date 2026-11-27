@@ -20,7 +20,7 @@ usage() {
   else
     printf '%s\n' \
       'Usage: ./start_all.sh [--keep|--restart] [--no-build] [--viewer|--headless] [--edge-only] [--dry-run]' \
-      'Start direct-camera RTC edge, shared-memory perception, radar, audio, fusion and static TF.' \
+      'Start direct-camera RTC edge, on-demand ROS images, perception, radar, audio, fusion and static TF.' \
       '  --viewer    Open the camera detection and front-left radar windows.' \
       '  --headless  Disable the preview windows (default).' \
       '  --edge-only Start only direct-camera RTC edge and audio.' \
@@ -100,7 +100,7 @@ for camera_name in "${selected_perception_cameras[@]}"; do
   selected_camera_names["$camera_name"]=true
 done
 
-modules=(camera radar audio perception fusion tf rtc viewer)
+modules=(camera camera_topics radar audio perception fusion tf rtc viewer)
 if [[ "$edge_only" == true ]]; then
   modules=(camera audio rtc)
   viewer=false
@@ -123,6 +123,7 @@ find_running_modules() {
     for argument in "${command_args[@]:0:2}"; do
       case "$argument" in
         "$workspace/install/dozer_camera_gmsl/lib/dozer_camera_gmsl/camera_gmsl_node") module=camera ;;
+        "$workspace/install/dozer_perception/lib/dozer_perception/camera_image_publisher.py") module=camera_topics ;;
         "$workspace/install/dozer_radar_sr73f/lib/dozer_radar_sr73f/radar_sr73f_node") module=radar ;;
         "$workspace/install/dozer_audio/lib/dozer_audio/audio_capture_node") module=audio ;;
         "$workspace/install/dozer_perception/lib/dozer_perception/yolo_node.py") module=perception ;;

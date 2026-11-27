@@ -57,6 +57,15 @@ class PerceptionLaunchTests(unittest.TestCase):
         context.launch_configurations['use_perception'] = 'false'
         self.assertEqual(LAUNCH.create_perception_nodes(context), [])
 
+    def test_image_topics_require_shared_memory(self):
+        context = self.context()
+        context.launch_configurations.update(use_camera_topics='true', use_perception='false',
+                                             use_rtc_edge='false')
+        LAUNCH.validate_camera_backend(context)
+        context.launch_configurations.update(image_backend='ros', use_mock_camera='true')
+        with self.assertRaisesRegex(RuntimeError, 'use_camera_topics'):
+            LAUNCH.validate_camera_backend(context)
+
     def test_invalid_lists(self):
         for selection in ('', 'front,front', 'unknown', 'front,', 'front,,rear', 'front, rear'):
             with self.subTest(selection=selection), self.assertRaises(RuntimeError):
@@ -81,8 +90,11 @@ class PerceptionLaunchTests(unittest.TestCase):
             result = subprocess.run(
                 [script, '--restart', '--dry-run', '--no-build', '--perception-cameras', selection],
                 capture_output=True, text=True, check=True)
-            self.assertIn('perception_cameras:=' + selection,
-                          shlex.split(result.stdout.splitlines()[-1]))
+            arguments = shlex.split(result.stdout.splitlines()[-1])
+            self.assertIn('perception_cameras:=' + selection, arguments)
+            self.assertIn('use_camera_topics:=true', arguments)
+        edge_only = subprocess.check_output([script, '--edge-only', '--restart', '--dry-run'], text=True)
+        self.assertNotIn('use_camera_topics:=true', edge_only)
         for arguments in (['--perception-cameras'], ['--perception-cameras', ''],
                           ['--perception-cameras', 'front,front'], ['--perception-cameras', 'unknown'],
                           ['--perception-cameras', 'front,'], ['--perception-cameras', 'front,,rear'],

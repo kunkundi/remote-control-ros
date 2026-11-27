@@ -44,6 +44,8 @@ def create_perception_nodes(context):
 def validate_camera_backend(context):
      selected = perception_camera_names(context)
      backend = LaunchConfiguration('image_backend').perform(context)
+     if backend != 'shm' and IfCondition(LaunchConfiguration('use_camera_topics', default='false')).evaluate(context):
+          raise RuntimeError('use_camera_topics requires image_backend:=shm')
      cameras = any(LaunchConfiguration(name).perform(context).lower() in ('true', '1')
                       for name in ('use_camera', 'use_mock_camera'))
      if backend == 'shm' and cameras:
@@ -87,6 +89,8 @@ def generate_launch_description():
                               description='发布三路模拟图像以检查感知话题链路'),
         DeclareLaunchArgument('use_camera', default_value='false',
                               description='启动六路真实 V4L2 相机采集节点'),
+        DeclareLaunchArgument('use_camera_topics', default_value='false',
+                              description='按订阅读取 edge 共享帧并发布六路 image_small'),
      DeclareLaunchArgument('image_backend', default_value='shm', choices=['shm', 'ros'],
                      description='感知图像输入：edge 共享内存或兼容 ROS 话题'),
      DeclareLaunchArgument('use_audio', default_value='false',
@@ -135,6 +139,8 @@ def generate_launch_description():
                   condition=IfCondition(use_camera)) for name in (
                        'front_left', 'front_right', 'front', 'rear', 'left', 'right')],
 
+        Node(package='dozer_perception', executable='camera_image_publisher.py',
+             output='screen', condition=IfCondition(LaunchConfiguration('use_camera_topics'))),
        OpaqueFunction(function=create_perception_nodes),
         Node(package='dozer_fusion', executable='fusion_node.py', name='fusion_node',
              output='screen',

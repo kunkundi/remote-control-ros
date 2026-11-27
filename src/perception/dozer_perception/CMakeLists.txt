@@ -13,7 +13,8 @@ find_package(rclpy REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(dozer_msgs REQUIRED)
 install(FILES model/best_int8.engine model/best_int8_batch6.engine DESTINATION share/${PROJECT_NAME}/model)
-install(PROGRAMS scripts/yolo_node.py scripts/yolo_batch_node.py scripts/detection_viewer.py DESTINATION lib/${PROJECT_NAME})
+install(PROGRAMS scripts/yolo_node.py scripts/yolo_batch_node.py scripts/detection_viewer.py
+  scripts/camera_image_publisher.py DESTINATION lib/${PROJECT_NAME})
 install(FILES scripts/camera_shm.py DESTINATION lib/${PROJECT_NAME})
 install(FILES scripts/batch_predictor.py DESTINATION lib/${PROJECT_NAME})
 

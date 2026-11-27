@@ -15,7 +15,7 @@
 `video5`，依次对应 `front_left`、`front_right`、`front`、`rear`、`left`、
 `right`；此映射的物理方向仍需核对。雷达配置使用 SensorID 0、1、2；预览脚本只启用 SensorID 0。
 默认 edge 独占六路 V4L2 设备，每路均可经共享内存送到感知。RTC 设备映射见
-`config/rtc_edge/edge.cfg`；默认不启动 ROS 相机节点，不发布图像话题。
+`config/rtc_edge/edge.cfg`。整车脚本启用 `use_camera_topics:=true`，独立节点在某一路有订阅者时，将该路最新共享帧发布到 `/camera/<name>/image_small`。单独使用总 launch 时此开关默认关闭，适用于 `image_backend:=shm`。RTC edge 独占 V4L2 设备。
 根脚本默认启用单进程六路 YOLO 批推理，`perception_cameras` 可选择任意非空子集；融合按配置处理三台雷达与六路相机，预览窗口只显示前左雷达。新增相机的
 内外参须在标定后补充。实车使用前须替换现有联调内外参。
 
