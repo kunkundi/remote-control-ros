@@ -91,6 +91,7 @@ ros2_ws/
 
 `dozer_rtc_console` 可以单独构建和运行。发送端和操作台都链接 `dozer_rtc_sdk::vtsrtc`，并在各自的可执行文件旁安装同一份动态库。
 Windows 10/11 x64 操作台支持 Visual Studio 2022 / CMake 独立构建，无需 ROS；使用 `src/remote_drive/dozer_rtc_console/build_windows.ps1`，依赖准备及运行步骤见下方操作台文档。
+为 UE4 导出同一份带 NVDEC 的 Windows SDK：在工作空间根目录双击或运行 `export_rtc_sdk.cmd`。产物为 `install/rtc-sdk/VtsRtc/` 和 `install/rtc-sdk/VtsRtc-Win64.zip`，接入方式见 [UE4 模块说明](src/remote_drive/dozer_rtc_sdk/ue4/README.md)。若没有现成的 Windows 构建，请先按 [依赖说明](vendor/windows/README.md) 准备开发包；自定义路径可用 `export_rtc_sdk.cmd -WebRtcRoot D:\deps\webrtc-win -NvCodecRoot D:\deps\Video_Codec_SDK_11.0.10 -OutputDirectory D:\exports`。导出脚本只编译 `vtsrtc` 目标；没有现成操作台构建时会独立配置 SDK，不需要编译 GUI、protobuf 或 ROS 节点。
 配置集中在 `dozer_bringup/config/rtc_console/`。构建和资产交付要求见
 [src/remote_drive/dozer_rtc_console/README.md](src/remote_drive/dozer_rtc_console/README.md)。
 
